@@ -37,3 +37,12 @@ NO tables, NO migrations, NO schema changes — a custom schema/migration plan i
 
 ## Notes
 - supabase-js pinned to 2.45.4; versions >=~2.11x require Node >=22 (env has Node 20).
+
+## Excel Preview System (READ-ONLY, no import) — 2026-08-07
+- RAM Admin selects management type (Resmî/Özel) + Excel file, gets a PREVIEW only. NO DB writes.
+- Backend: `excel_preview.py` (pure `analyze_rows` + read-only `load_reference`) and `POST /api/schools/preview`.
+- Validates rows against `districts` and `school_types` (read-only). Reference tables already exist in Supabase (15 districts, 25 school_types) — migrations 001/002/005 were applied by the user.
+- Rules: Turkish-aware normalization (whitespace/case), MEB aliases (Anadolu Meslek Programı→Mesleki ve Teknik Anadolu Lisesi; Özel Eğitim Meslek Okulu (Zihinsel Engelliler)→Özel Eğitim Meslek Okulu), out-of-scope auto-flag (RAM, BİLSEM, İlçe MEM, Halk Eğitimi Merkezi).
+- Statuses: YÜKLENEBİLİR / KAPSAM DIŞI / HATALI İLÇE / HATALI OKUL TÜRÜ. Summary counts + table.
+- Frontend: `pages/SchoolImportPreview.jsx` (main route "/"), `pages/ConnectionStatus.jsx` ("/status"), router in `App.js`.
+- E2E verified via API + UI screenshot. Import/insert NOT built yet (next step, pending approval).

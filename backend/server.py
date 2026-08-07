@@ -9,10 +9,11 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from supabase_client import get_service_client, SUPABASE_URL
+from excel_preview import analyze_rows, load_reference, VALID_MANAGEMENT_TYPES
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -67,6 +68,52 @@ async def supabase_status():
     except Exception as e:  # noqa: BLE001
         logger.exception("Supabase connection check failed")
         result["error"] = str(e)
+
+    return result
+
+
+@api.post("/schools/preview")
+async def schools_preview(
+    file: UploadFile = File(...),
+    management_type: str = Form(...),
+):
+    """Analyze an uploaded Excel file and return a PREVIEW only.
+
+    READ-ONLY: reads districts & school_types for validation. Writes NOTHING
+    to the database. No schools are created here.
+    """
+    if management_type not in VALID_MANAGEMENT_TYPES:
+        raise HTTPException(status_code=400, detail="Geçersiz yönetim türü. 'Resmî' veya 'Özel' olmalı.")
+
+    fname = (file.filename or "").lower()
+    if not (fname.endswith(".xlsx") or fname.endswith(".xlsm")):
+        raise HTTPException(status_code=400, detail="Lütfen bir Excel dosyası (.xlsx) yükleyin.")
+
+    content = await file.read()
+
+    try:
+        districts, school_types = load_reference()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Reference load failed")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Referans tabloları okunamadı (districts / school_types). "
+                "Ön izleme için Migration 002 (districts) ve 001+005 (school_types + seed) "
+                f"uygulanmış olmalıdır. Ayrıntı: {e}"
+            ),
+        )
+
+    try:
+        result = analyze_rows(content, management_type, districts, school_types)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Excel analysis failed")
+        raise HTTPException(status_code=400, detail=f"Excel çözümlenemedi: {e}")
+
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
 
     return result
 
