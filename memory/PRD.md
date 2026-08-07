@@ -57,3 +57,4 @@ NO tables, NO migrations, NO schema changes — a custom schema/migration plan i
 - Frontend: "{loadable} Okulu Aktar" button (enabled only when preview done & invalid_district=0 & invalid_school_type=0 & loadable>0). Frontend never does direct Supabase inserts; secret key stays backend-only.
 - Tested (all pass, test rows cleaned up): same MERNIS×2 both insert; re-upload → all ZATEN MEVCUT; out-of-scope never inserted; bad district → 400 no insert; education_level_id auto-mapped correctly.
 - NO users/auth, NO migrations, NO schema/RLS changes, reference tables untouched.
+- ✅ ACCEPTED by user 2026-08-07: 114 real schools imported to Supabase successfully in production. Module frozen (no further changes for now).
