@@ -53,7 +53,7 @@ CREATE TABLE management_types (
 CREATE TABLE school_types (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     education_level_id SMALLINT NOT NULL
-                       REFERENCES education_levels(id) ON DELETE RESTRICT,
+                       REFERENCES education_levels(id) ON UPDATE CASCADE ON DELETE RESTRICT,
     name               TEXT NOT NULL,
     is_active          BOOLEAN NOT NULL DEFAULT true,
     CONSTRAINT uq_school_types_level_name UNIQUE (education_level_id, name)
