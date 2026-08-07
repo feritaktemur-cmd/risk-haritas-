@@ -46,3 +46,14 @@ NO tables, NO migrations, NO schema changes — a custom schema/migration plan i
 - Statuses: YÜKLENEBİLİR / KAPSAM DIŞI / HATALI İLÇE / HATALI OKUL TÜRÜ. Summary counts + table.
 - Frontend: `pages/SchoolImportPreview.jsx` (main route "/"), `pages/ConnectionStatus.jsx` ("/status"), router in `App.js`.
 - E2E verified via API + UI screenshot. Import/insert NOT built yet (next step, pending approval).
+
+## Secure Import ("Okulları Aktar") — 2026-08-07
+- `POST /api/schools/import` (backend-only, service client). Inserts ONLY loadable rows into `schools`.
+- Refuses to start if any HATALI İLÇE / HATALI OKUL TÜRÜ (returns 400, no insert).
+- Field mapping: name→name, MERNIS→mernis_address_code (TEXT), district→district_id, MEB type→school_type (via alias/normalize)→school_type_id; education_level_id auto from matched school_type; management_type_id from management_types by name; is_active=true.
+- Duplicate protection (backend layer, NO new UNIQUE constraint): key = (normalized name, district_id, mernis_address_code). Existing or within-file dup → "ZATEN MEVCUT", skipped. MERNIS alone is NOT a dup criterion (same MERNIS + different school/district both insert).
+- Atomic single bulk INSERT (all-or-nothing); on failure → 500 with clear message, nothing written.
+- Result summary: Toplam / Eklenen / Zaten Mevcut / Kapsam Dışı / Hatalı / Atlanan; per-row statuses EKLENDİ / ZATEN MEVCUT / KAPSAM DIŞI / HATA.
+- Frontend: "{loadable} Okulu Aktar" button (enabled only when preview done & invalid_district=0 & invalid_school_type=0 & loadable>0). Frontend never does direct Supabase inserts; secret key stays backend-only.
+- Tested (all pass, test rows cleaned up): same MERNIS×2 both insert; re-upload → all ZATEN MEVCUT; out-of-scope never inserted; bad district → 400 no insert; education_level_id auto-mapped correctly.
+- NO users/auth, NO migrations, NO schema/RLS changes, reference tables untouched.

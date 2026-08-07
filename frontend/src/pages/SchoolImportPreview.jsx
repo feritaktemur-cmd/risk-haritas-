@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import axios from "axios";
-import { Upload, FileSpreadsheet, Check, AlertTriangle, Loader2, Building2 } from "lucide-react";
+import { Upload, FileSpreadsheet, Check, AlertTriangle, Loader2, Building2, Download, SkipForward, X, CornerDownRight } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -9,13 +9,24 @@ const STATUS_STYLES = {
   "KAPSAM DIŞI": "bg-slate-500/15 text-slate-300 ring-slate-400/30",
   "HATALI İLÇE": "bg-amber-500/15 text-amber-300 ring-amber-400/30",
   "HATALI OKUL TÜRÜ": "bg-rose-500/15 text-rose-300 ring-rose-400/30",
+  "EKLENDİ": "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
+  "ZATEN MEVCUT": "bg-sky-500/15 text-sky-300 ring-sky-400/30",
+  "HATA": "bg-rose-500/15 text-rose-300 ring-rose-400/30",
+};
+
+const STATUS_ICON = {
+  "YÜKLENEBİLİR": <Check size={13} />,
+  "EKLENDİ": <Check size={13} />,
+  "ZATEN MEVCUT": <CornerDownRight size={13} />,
+  "KAPSAM DIŞI": <SkipForward size={13} />,
+  "HATA": <X size={13} />,
 };
 
 function StatusBadge({ status }) {
   const style = STATUS_STYLES[status] || "bg-slate-500/15 text-slate-300 ring-slate-400/30";
   return (
     <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${style}`}>
-      {status === "YÜKLENEBİLİR" && <Check size={13} />}
+      {STATUS_ICON[status]}
       {status}
     </span>
   );
@@ -45,12 +56,17 @@ export default function SchoolImportPreview() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState(null);
+  const [importResult, setImportResult] = useState(null);
   const inputRef = useRef();
 
   const onFile = (e) => {
     setFile(e.target.files?.[0] || null);
     setResult(null);
     setError(null);
+    setImportResult(null);
+    setImportError(null);
   };
 
   const generate = async () => {
@@ -61,6 +77,8 @@ export default function SchoolImportPreview() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setImportResult(null);
+    setImportError(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -75,7 +93,29 @@ export default function SchoolImportPreview() {
     setLoading(false);
   };
 
+  const runImport = async () => {
+    if (!file) return;
+    setImporting(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("management_type", managementType);
+      const { data } = await axios.post(`${API}/schools/import`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setImportResult(data);
+    } catch (e) {
+      setImportError(e.response?.data?.detail || e.message);
+    }
+    setImporting(false);
+  };
+
   const s = result?.summary;
+  const canImport =
+    !!result && s.invalid_district === 0 && s.invalid_school_type === 0 && s.loadable > 0;
+  const imp = importResult?.summary;
 
   return (
     <div>
@@ -167,7 +207,27 @@ export default function SchoolImportPreview() {
       {/* Preview result */}
       {result && (
         <div className="mt-8" data-testid="preview-result">
-          <h2 className="mb-4 text-lg font-bold text-white">Ön İzleme Sonucu</h2>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-bold text-white">Ön İzleme Sonucu</h2>
+            <div className="flex items-center gap-3">
+              {!canImport && (
+                <span className="text-xs text-amber-300">
+                  {s.loadable === 0
+                    ? "Yüklenebilir kayıt yok."
+                    : "Hatalı ilçe/okul türü giderilmeden aktarım yapılamaz."}
+                </span>
+              )}
+              <button
+                onClick={runImport}
+                disabled={!canImport || importing}
+                data-testid="import-btn"
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-white/[0.06] disabled:text-slate-500 disabled:shadow-none"
+              >
+                {importing ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                {s.loadable} Okulu Aktar
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <Stat label="Toplam Satır" value={s.total} tone="total" />
             <Stat label="Yüklenebilir" value={s.loadable} tone="ok" />
@@ -175,6 +235,28 @@ export default function SchoolImportPreview() {
             <Stat label="Hatalı İlçe" value={s.invalid_district} tone="warn" />
             <Stat label="Hatalı Okul Türü" value={s.invalid_school_type} tone="bad" />
           </div>
+
+          {importError && (
+            <div data-testid="import-error" className="mt-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>{importError}</span>
+            </div>
+          )}
+
+          {/* Import result */}
+          {importResult && (
+            <div className="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-500/[0.04] p-5" data-testid="import-result">
+              <h3 className="mb-4 text-base font-bold text-white">Aktarım Sonucu</h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                <Stat label="Toplam Satır" value={imp.total} tone="total" />
+                <Stat label="Eklenen Okul" value={imp.inserted} tone="ok" />
+                <Stat label="Zaten Mevcut" value={imp.already_exists} tone="muted" />
+                <Stat label="Kapsam Dışı" value={imp.out_of_scope} tone="muted" />
+                <Stat label="Hatalı" value={imp.error} tone="bad" />
+                <Stat label="Atlanan" value={imp.skipped} tone="warn" />
+              </div>
+            </div>
+          )}
 
           <div className="mt-6 overflow-hidden rounded-2xl border border-white/10">
             <table className="w-full text-left text-sm" data-testid="preview-table">
@@ -188,7 +270,7 @@ export default function SchoolImportPreview() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {result.rows.map((r, i) => (
+                {(importResult?.rows || result.rows).map((r, i) => (
                   <tr key={i} className="text-slate-300 hover:bg-white/[0.02]">
                     <td className="px-4 py-2.5">{r.institution_name}</td>
                     <td className="px-4 py-2.5 text-slate-400">{r.district}</td>

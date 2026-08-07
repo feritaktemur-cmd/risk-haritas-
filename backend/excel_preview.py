@@ -57,9 +57,13 @@ VALID_MANAGEMENT_TYPES = {"Resmî", "Özel"}
 
 
 def _find_header(rows):
-    """Locate header row + column indexes for name / district / MEB type."""
+    """Locate header row + column indexes for name / district / MEB type / mernis.
+
+    Validity requires name + district + type. 'mernis' is optional for preview
+    but required by the import flow.
+    """
     for r_idx, row in enumerate(rows[:15]):
-        cols = {"name": None, "district": None, "type": None}
+        cols = {"name": None, "district": None, "type": None, "mernis": None}
         for c_idx, cell in enumerate(row):
             h = norm(cell)
             if not h:
@@ -70,7 +74,9 @@ def _find_header(rows):
                 cols["district"] = c_idx
             if cols["type"] is None and ("tür" in h or "tur" in h):
                 cols["type"] = c_idx
-        if all(v is not None for v in cols.values()):
+            if cols["mernis"] is None and ("mernis" in h or "adres kod" in h):
+                cols["mernis"] = c_idx
+        if cols["name"] is not None and cols["district"] is not None and cols["type"] is not None:
             return r_idx, cols
     return None, None
 
@@ -159,5 +165,126 @@ def load_reference():
     """READ-ONLY fetch of districts & school_types from Supabase."""
     client = get_service_client()
     districts = client.table("districts").select("id,name,is_active").execute().data
-    school_types = client.table("school_types").select("id,name,is_active").execute().data
+    school_types = client.table("school_types").select("id,name,is_active,education_level_id").execute().data
     return districts, school_types
+
+
+def plan_import(file_bytes, management_type, districts, school_types, management_types, existing_schools):
+    """Pure import planner. NO DB writes here.
+
+    Classifies each row and builds INSERT payloads for loadable+new rows only.
+    Duplicate = same (normalized name, district_id, mernis_address_code) as an
+    existing school OR an earlier row in this same file. MERNIS alone is NOT a
+    duplicate criterion.
+    """
+    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    ws = wb.active
+    all_rows = list(ws.iter_rows(values_only=True))
+
+    header_idx, cols = _find_header(all_rows)
+    if cols is None:
+        return {"error": "Excel başlıkları bulunamadı. 'Kurum Adı', 'İlçe' ve 'Kurum Türü' sütunları gereklidir."}
+    if cols["mernis"] is None:
+        return {"error": "MERNİS sütunu bulunamadı. 'MERNIS Adres Kodu' sütunu gereklidir."}
+
+    district_index = {norm(d["name"]): d for d in districts if d.get("is_active", True)}
+    st_index = {norm(s["name"]): s for s in school_types if s.get("is_active", True)}
+    mgmt_index = {norm(m["name"]): m for m in management_types}
+
+    mt = mgmt_index.get(norm(management_type))
+    if mt is None:
+        return {"error": f"Yönetim türü bulunamadı: {management_type}"}
+
+    existing = set()
+    for s in existing_schools:
+        mernis = s.get("mernis_address_code")
+        existing.add((norm(s.get("name")), s.get("district_id"), str(mernis).strip() if mernis is not None else ""))
+
+    data_rows = all_rows[header_idx + 1:]
+    rows_out = []
+    to_insert = []
+    insert_row_refs = []
+    seen_batch = set()
+    summary = {
+        "total": 0, "invalid_district": 0, "invalid_school_type": 0,
+        "out_of_scope": 0, "already_exists": 0, "error": 0, "to_insert": 0,
+    }
+
+    for row in data_rows:
+        def cell(k):
+            i = cols[k]
+            return row[i] if (i is not None and i < len(row)) else None
+
+        name, district, meb, mernis = cell("name"), cell("district"), cell("type"), cell("mernis")
+        if not any(norm(x) for x in (name, district, meb, mernis)):
+            continue
+
+        summary["total"] += 1
+        name_s = str(name).strip() if name is not None else ""
+        district_s = str(district).strip() if district is not None else ""
+        meb_s = str(meb).strip() if meb is not None else ""
+        mernis_s = str(mernis).strip() if mernis is not None else ""
+        meb_n, district_n = norm(meb), norm(district)
+
+        entry = {
+            "institution_name": name_s, "district": district_s, "meb_type": meb_s,
+            "mernis": mernis_s, "system_school_type": "-", "status": None,
+        }
+
+        if any(k in meb_n for k in _OUT_OF_SCOPE_N):
+            entry["status"] = ST_OUT
+            summary["out_of_scope"] += 1
+            rows_out.append(entry)
+            continue
+
+        d = district_index.get(district_n)
+        st = _map_school_type(meb_n, st_index)
+        if d is None:
+            entry["status"] = ST_BAD_DISTRICT
+            summary["invalid_district"] += 1
+            rows_out.append(entry)
+            continue
+        if st is None:
+            entry["status"] = ST_BAD_TYPE
+            summary["invalid_school_type"] += 1
+            rows_out.append(entry)
+            continue
+
+        entry["system_school_type"] = st["name"]
+
+        if not mernis_s:
+            entry["status"] = "HATA"
+            entry["error"] = "MERNİS adres kodu boş"
+            summary["error"] += 1
+            rows_out.append(entry)
+            continue
+
+        key = (norm(name_s), d["id"], mernis_s)
+        if key in existing or key in seen_batch:
+            entry["status"] = "ZATEN MEVCUT"
+            summary["already_exists"] += 1
+            rows_out.append(entry)
+            continue
+
+        seen_batch.add(key)
+        payload = {
+            "name": name_s,
+            "mernis_address_code": mernis_s,
+            "district_id": d["id"],
+            "education_level_id": st["education_level_id"],
+            "management_type_id": mt["id"],
+            "school_type_id": st["id"],
+            "is_active": True,
+        }
+        insert_row_refs.append(len(rows_out))
+        entry["status"] = "WILL_INSERT"
+        rows_out.append(entry)
+        to_insert.append(payload)
+        summary["to_insert"] += 1
+
+    return {
+        "summary": summary,
+        "rows": rows_out,
+        "to_insert": to_insert,
+        "insert_row_refs": insert_row_refs,
+    }
