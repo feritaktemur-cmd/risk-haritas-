@@ -58,3 +58,16 @@ NO tables, NO migrations, NO schema changes — a custom schema/migration plan i
 - Tested (all pass, test rows cleaned up): same MERNIS×2 both insert; re-upload → all ZATEN MEVCUT; out-of-scope never inserted; bad district → 400 no insert; education_level_id auto-mapped correctly.
 - NO users/auth, NO migrations, NO schema/RLS changes, reference tables untouched.
 - ✅ ACCEPTED by user 2026-08-07: 114 real schools imported to Supabase successfully in production. Module frozen (no further changes for now).
+
+## Migration 006 — School Accounts base infra (APPLIED & CLOSED, 2026-08-07)
+- File: `supabase/migrations/006_school_accounts.sql`. Applied by user via Supabase SQL Editor.
+- Table `public.school_accounts` created: id(uuid pk), school_id(uuid uniq FK→schools.id ON DELETE RESTRICT), auth_user_id(uuid uniq FK→auth.users.id ON DELETE RESTRICT), username(text uniq), is_active(bool def true), must_change_password(bool def true), password_reset_at(timestamptz null), created_at/updated_at(timestamptz def now()). No password/hash stored.
+- Case-insensitive username uniqueness via unique index `ux_school_accounts_username_ci` on lower(username).
+- updated_at auto via trigger `set_updated_at` + `tg_school_accounts_set_updated_at()`.
+- RLS ENABLED, 0 policies (deferred). Helper `current_school_id()` (SECURITY DEFINER, search_path='', fully-qualified, STABLE; REVOKE PUBLIC/anon, GRANT EXECUTE authenticated; service_role intentionally not granted). Returns active account's school_id or NULL.
+- `is_ram_admin()` intentionally NOT created (no admin_profiles table yet) — deferred to a later migration.
+- FULLY VERIFIED (API + user SQL Editor read-only checks) and CLOSED.
+- NOTE: schools was 114 at verification time; a later separate data-entry effort changed the total, so 114 is no longer the current school count.
+
+## Current directive (2026-08-07)
+- HOLD: do NOT start Migration 007 or any new development. Preserve current state.
