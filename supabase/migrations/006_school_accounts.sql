@@ -89,7 +89,7 @@ RETURNS UUID
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
     SELECT sa.school_id
     FROM public.school_accounts sa
@@ -98,6 +98,11 @@ AS $$
     LIMIT 1;
 $$;
 
+-- Lock down execution: do not leave the default PUBLIC access open.
+-- service_role is intentionally NOT granted: service-key flows bypass RLS
+-- and do not call this helper, so no extra privilege is added.
+REVOKE ALL ON FUNCTION public.current_school_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.current_school_id() FROM anon;
 GRANT EXECUTE ON FUNCTION public.current_school_id() TO authenticated;
 
 COMMIT;
