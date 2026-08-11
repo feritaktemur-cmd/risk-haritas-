@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { ShieldCheck, Loader2, LogOut, Users } from "lucide-react";
+import { ShieldCheck, Loader2, LogOut, Users, FileSpreadsheet } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -95,6 +95,22 @@ export default function AdminHome() {
             <span>
               <span className="block text-sm font-bold text-white">Okul Hesapları</span>
               <span className="block text-xs text-slate-400">Okulları görüntüle ve hesap oluştur</span>
+            </span>
+          </button>
+        </div>
+
+        <div className="mt-4">
+          <button
+            onClick={() => navigate("/admin/school-import")}
+            data-testid="nav-school-import"
+            className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-4 text-left transition hover:border-emerald-400/40 hover:bg-white/[0.06]"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+              <FileSpreadsheet size={20} />
+            </span>
+            <span>
+              <span className="block text-sm font-bold text-white">Okul İçe Aktarma</span>
+              <span className="block text-xs text-slate-400">Excel ile okul kayıtlarını ön izle ve içe aktar</span>
             </span>
           </button>
         </div>
