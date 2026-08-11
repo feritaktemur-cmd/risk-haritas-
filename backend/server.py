@@ -541,6 +541,141 @@ async def school_change_password(request: Request):
     return {"ok": True}
 
 
+def _require_school_ready(request: Request):
+    """Active school account that has completed mandatory password change.
+
+    Returns (auth_user_id, account_row). Raises 403 'password_change_required'
+    if must_change_password is still true.
+    """
+    auth_user_id, acc = _resolve_school_by_token(request)
+    if acc.get("must_change_password"):
+        raise HTTPException(status_code=403, detail="password_change_required")
+    return auth_user_id, acc
+
+
+def _school_context(client, school_id):
+    rows = (
+        client.table("schools")
+        .select("name,education_level:education_levels(name),district:districts(name)")
+        .eq("id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows:
+        return {"school_name": None, "district": None, "education_level": None, "is_preschool": False}
+    r = rows[0]
+    edu = (r.get("education_level") or {}).get("name")
+    return {
+        "school_name": r["name"],
+        "district": (r.get("district") or {}).get("name"),
+        "education_level": edu,
+        "is_preschool": edu == "Okul Öncesi",
+    }
+
+
+@api.get("/school/classes")
+async def school_classes_list(request: Request):
+    """List the logged-in school's own classes (scoped by token->school_id)."""
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    ctx = _school_context(client, acc["school_id"])
+    rows = (
+        client.table("school_classes")
+        .select("id,level,branch")
+        .eq("school_id", acc["school_id"])
+        .order("level")
+        .order("branch")
+        .execute()
+        .data
+    )
+    level_options = [4, 5] if ctx["is_preschool"] else list(range(1, 13))
+    return {
+        "school_name": ctx["school_name"],
+        "district": ctx["district"],
+        "is_preschool": ctx["is_preschool"],
+        "level_options": level_options,
+        "classes": rows,
+    }
+
+
+@api.post("/school/classes")
+async def school_classes_create(request: Request):
+    """Create a class for the logged-in school. school_id is derived server-side."""
+    _uid, acc = _require_school_ready(request)
+    body = await request.json()
+    level = (body or {}).get("level")
+    branch = (body or {}).get("branch")
+
+    # Branch: exactly one uppercase Latin letter.
+    if not isinstance(branch, str) or not _re.fullmatch(r"[A-Z]", branch):
+        raise HTTPException(status_code=400, detail="Şube yalnızca tek bir büyük harf (A-Z) olabilir.")
+
+    # Level: integer, range depends on preschool status.
+    try:
+        level = int(level)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Geçersiz seviye.")
+
+    client = get_service_client()
+    ctx = _school_context(client, acc["school_id"])
+    if ctx["is_preschool"]:
+        if level not in (4, 5):
+            raise HTTPException(status_code=400, detail="Anaokulu için yaş grubu yalnızca 4 veya 5 olabilir.")
+    else:
+        if not (1 <= level <= 12):
+            raise HTTPException(status_code=400, detail="Sınıf seviyesi 1 ile 12 arasında olmalıdır.")
+
+    # Friendly duplicate handling (UNIQUE (school_id, level, branch)).
+    existing = (
+        client.table("school_classes")
+        .select("id")
+        .eq("school_id", acc["school_id"])
+        .eq("level", level)
+        .eq("branch", branch)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Bu sınıf zaten tanımlı.")
+
+    try:
+        inserted = (
+            client.table("school_classes")
+            .insert({"school_id": acc["school_id"], "level": level, "branch": branch})
+            .execute()
+            .data
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("class insert failed")
+        # Likely a race on the UNIQUE constraint; keep the message friendly.
+        raise HTTPException(status_code=409, detail="Bu sınıf zaten tanımlı.")
+
+    row = inserted[0] if inserted else {"level": level, "branch": branch}
+    return {"id": row.get("id"), "level": level, "branch": branch}
+
+
+@api.delete("/school/classes/{class_id}")
+async def school_classes_delete(class_id: str, request: Request):
+    """Delete a class, but only if it belongs to the logged-in school."""
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+
+    rows = client.table("school_classes").select("id,school_id").eq("id", class_id).limit(1).execute().data
+    row = rows[0] if rows else None
+    if row is None or row["school_id"] != acc["school_id"]:
+        # Do not reveal other schools' classes.
+        raise HTTPException(status_code=404, detail="Sınıf bulunamadı.")
+
+    try:
+        client.table("school_classes").delete().eq("id", class_id).eq("school_id", acc["school_id"]).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("class delete failed")
+        raise HTTPException(status_code=409, detail="Bu sınıf silinemedi.")
+    return {"ok": True}
+
+
 app.include_router(api)
 
 app.add_middleware(
