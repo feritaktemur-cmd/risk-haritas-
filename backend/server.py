@@ -12,9 +12,52 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from supabase_client import get_service_client, SUPABASE_URL
+from supabase_client import get_service_client, get_anon_client, SUPABASE_URL
 from excel_preview import analyze_rows, load_reference, plan_import, VALID_MANAGEMENT_TYPES
 from admin_accounts import generate_username, generate_temp_password, synth_email_for
+import re as _re
+
+
+def _valid_school_password(pw: str):
+    """>=8 chars, at least 1 letter and 1 digit."""
+    return bool(pw) and len(pw) >= 8 and _re.search(r"[A-Za-z]", pw) and _re.search(r"\d", pw)
+
+
+def _resolve_school_by_token(request: Request):
+    """Validate token -> active school_accounts row. Raises HTTPException.
+
+    Returns (auth_user_id, account_row). Used by school-side protected endpoints.
+    Generic messages; no leakage of existence.
+    """
+    token = _get_bearer_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Oturum bulunamadı.")
+    client = get_service_client()
+    try:
+        user = getattr(client.auth.get_user(token), "user", None)
+    except Exception:  # noqa: BLE001
+        user = None
+    if user is None or not getattr(user, "id", None):
+        raise HTTPException(status_code=401, detail="Oturum geçersiz.")
+    rows = (
+        client.table("school_accounts")
+        .select("id,school_id,username,is_active,must_change_password")
+        .eq("auth_user_id", user.id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    acc = rows[0] if rows else None
+    if acc is None or not acc.get("is_active"):
+        raise HTTPException(status_code=403, detail="Bu hesapla giriş yapılamıyor. Lütfen RAM ile iletişime geçin.")
+    return user.id, acc
+
+
+def _school_display(client, school_id):
+    rows = client.table("schools").select("name,district:districts(name)").eq("id", school_id).limit(1).execute().data
+    if not rows:
+        return {"school_name": None, "district": None}
+    return {"school_name": rows[0]["name"], "district": (rows[0].get("district") or {}).get("name")}
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -391,6 +434,111 @@ async def create_school_account(request: Request):
         "username": username,
         "temp_password": temp_password,
     }
+
+
+@api.post("/school/login")
+async def school_login(request: Request):
+    """Username + password login for school accounts.
+
+    Resolves the visible username to the synthetic (hidden) Auth email,
+    verifies password via Supabase Auth, and returns session tokens.
+    Generic errors; account existence is not leaked. Secret key stays backend.
+    """
+    body = await request.json()
+    username = (body or {}).get("username", "")
+    password = (body or {}).get("password", "")
+    username_norm = str(username).strip().lower()
+    if not username_norm or not password:
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+
+    client = get_service_client()
+    rows = (
+        client.table("school_accounts")
+        .select("id,school_id,username,is_active,must_change_password")
+        .eq("username", username_norm)
+        .limit(1)
+        .execute()
+        .data
+    )
+    acc = rows[0] if rows else None
+    if acc is None:
+        # Do not leak whether the username exists.
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+    if not acc.get("is_active"):
+        raise HTTPException(status_code=403, detail="Bu hesapla giriş yapılamıyor. Lütfen RAM ile iletişime geçin.")
+
+    # Resolve the hidden synthetic email deterministically from the username.
+    synth_email = synth_email_for(acc["username"])
+
+    # Verify password via Supabase Auth using the anon (publishable) client.
+    anon = get_anon_client()
+    try:
+        auth_res = anon.auth.sign_in_with_password({"email": synth_email, "password": password})
+        session = getattr(auth_res, "session", None)
+    except Exception:  # noqa: BLE001
+        session = None
+    if session is None or not getattr(session, "access_token", None):
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+
+    disp = _school_display(client, acc["school_id"])
+    return {
+        "access_token": session.access_token,
+        "refresh_token": session.refresh_token,
+        "must_change_password": bool(acc.get("must_change_password")),
+        "school_name": disp["school_name"],
+        "district": disp["district"],
+    }
+
+
+@api.get("/school/session")
+async def school_session(request: Request):
+    """Session info for routing (works even if must_change_password=true)."""
+    _uid, acc = _resolve_school_by_token(request)
+    client = get_service_client()
+    disp = _school_display(client, acc["school_id"])
+    return {
+        "must_change_password": bool(acc.get("must_change_password")),
+        "school_name": disp["school_name"],
+        "district": disp["district"],
+    }
+
+
+@api.get("/school/panel")
+async def school_panel(request: Request):
+    """Panel data. SERVER-SIDE gate: denied if must_change_password=true."""
+    _uid, acc = _resolve_school_by_token(request)
+    if acc.get("must_change_password"):
+        raise HTTPException(status_code=403, detail="password_change_required")
+    client = get_service_client()
+    disp = _school_display(client, acc["school_id"])
+    return {"school_name": disp["school_name"], "district": disp["district"]}
+
+
+@api.post("/school/change-password")
+async def school_change_password(request: Request):
+    """Change password for the logged-in active school account (server-side)."""
+    auth_user_id, acc = _resolve_school_by_token(request)
+    body = await request.json()
+    new_password = (body or {}).get("new_password", "")
+    if not _valid_school_password(new_password):
+        raise HTTPException(status_code=400, detail="Şifreniz en az 8 karakter olmalı ve en az bir harf ile bir rakam içermelidir.")
+
+    client = get_service_client()
+    # Update password in Supabase Auth (admin API, service key).
+    try:
+        client.auth.admin.update_user_by_id(auth_user_id, {"password": new_password})
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Password update failed")
+        raise HTTPException(status_code=500, detail="Şifre güncellenemedi.")
+
+    # Clear the mandatory-change flag.
+    try:
+        client.table("school_accounts").update({"must_change_password": False}).eq("id", acc["id"]).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("must_change_password update failed")
+        raise HTTPException(status_code=500, detail="Şifre güncellendi ancak durum güncellenemedi. Lütfen tekrar giriş yapın.")
+
+    return {"ok": True}
 
 
 app.include_router(api)
