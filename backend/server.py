@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from supabase_client import get_service_client, SUPABASE_URL
@@ -187,6 +187,60 @@ async def schools_import(
         "skipped": total - inserted,
     }
     return {"management_type": management_type, "summary": summary, "rows": plan["rows"]}
+
+
+def _get_bearer_token(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[7:].strip()
+    return None
+
+
+@api.get("/admin/me")
+async def admin_me(request: Request):
+    """Server-side authoritative check for General Admin access.
+
+    1) Validate the Supabase access token (server-side, via Auth server).
+    2) Look up admin_profiles with the backend service client.
+    Access is granted ONLY if an admin_profiles row exists with
+    is_active=true AND role='general_admin'. Frontend checks are not trusted.
+    Messages are generic (no technical detail).
+    """
+    token = _get_bearer_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Oturum bulunamadı.")
+
+    client = get_service_client()
+
+    # 1) Validate token against Supabase Auth (authoritative).
+    try:
+        user_resp = client.auth.get_user(token)
+        user = getattr(user_resp, "user", None)
+    except Exception:  # noqa: BLE001
+        user = None
+    if user is None or not getattr(user, "id", None):
+        raise HTTPException(status_code=401, detail="Oturum geçersiz.")
+
+    # 2) Authorization via admin_profiles (service client bypasses RLS).
+    try:
+        rows = (
+            client.table("admin_profiles")
+            .select("full_name,role,is_active")
+            .eq("auth_user_id", user.id)
+            .limit(1)
+            .execute()
+            .data
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("admin_profiles lookup failed")
+        raise HTTPException(status_code=500, detail="Yetki kontrolü yapılamadı.")
+
+    prof = rows[0] if rows else None
+    if prof is None or not prof.get("is_active") or prof.get("role") != "general_admin":
+        # Same generic message for missing / inactive / non-general-admin.
+        raise HTTPException(status_code=403, detail="Bu hesabın yönetim erişimi yok.")
+
+    return {"full_name": prof["full_name"], "role": prof["role"]}
 
 
 app.include_router(api)
