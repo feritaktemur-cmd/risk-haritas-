@@ -13,3 +13,11 @@ body {
   background: #0b1120;
   color: #e2e8f0;
 }
+
+/* Native select dropdown: ensure options are readable on the dark theme.
+   Without this, the OS renders the open dropdown with a white background
+   while our text is light, making options invisible. */
+select option {
+  background-color: #0f1629;
+  color: #e2e8f0;
+}
