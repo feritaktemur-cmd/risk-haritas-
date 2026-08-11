@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from supabase_client import get_service_client, SUPABASE_URL
 from excel_preview import analyze_rows, load_reference, plan_import, VALID_MANAGEMENT_TYPES
+from admin_accounts import generate_username, generate_temp_password, synth_email_for
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -196,23 +197,16 @@ def _get_bearer_token(request: Request):
     return None
 
 
-@api.get("/admin/me")
-async def admin_me(request: Request):
-    """Server-side authoritative check for General Admin access.
+def _require_general_admin(request: Request):
+    """Server-side authoritative General Admin gate.
 
-    1) Validate the Supabase access token (server-side, via Auth server).
-    2) Look up admin_profiles with the backend service client.
-    Access is granted ONLY if an admin_profiles row exists with
-    is_active=true AND role='general_admin'. Frontend checks are not trusted.
-    Messages are generic (no technical detail).
+    Returns (auth_user_id, profile) or raises HTTPException. Used by all
+    /api/admin/* endpoints. Frontend checks are never trusted.
     """
     token = _get_bearer_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="Oturum bulunamadı.")
-
     client = get_service_client()
-
-    # 1) Validate token against Supabase Auth (authoritative).
     try:
         user_resp = client.auth.get_user(token)
         user = getattr(user_resp, "user", None)
@@ -220,8 +214,6 @@ async def admin_me(request: Request):
         user = None
     if user is None or not getattr(user, "id", None):
         raise HTTPException(status_code=401, detail="Oturum geçersiz.")
-
-    # 2) Authorization via admin_profiles (service client bypasses RLS).
     try:
         rows = (
             client.table("admin_profiles")
@@ -234,13 +226,171 @@ async def admin_me(request: Request):
     except Exception:  # noqa: BLE001
         logger.exception("admin_profiles lookup failed")
         raise HTTPException(status_code=500, detail="Yetki kontrolü yapılamadı.")
-
     prof = rows[0] if rows else None
     if prof is None or not prof.get("is_active") or prof.get("role") != "general_admin":
-        # Same generic message for missing / inactive / non-general-admin.
         raise HTTPException(status_code=403, detail="Bu hesabın yönetim erişimi yok.")
+    return user.id, prof
 
+
+@api.get("/admin/me")
+async def admin_me(request: Request):
+    """Server-side authoritative check for General Admin access."""
+    _uid, prof = _require_general_admin(request)
     return {"full_name": prof["full_name"], "role": prof["role"]}
+
+
+@api.get("/admin/districts")
+async def admin_districts(request: Request):
+    _require_general_admin(request)
+    client = get_service_client()
+    rows = client.table("districts").select("id,name").eq("is_active", True).order("name").execute().data
+    return {"districts": rows}
+
+
+def _fetch_all(build):
+    """Range-paginate a PostgREST query built by `build(start, end)`."""
+    out = []
+    start, step = 0, 1000
+    while True:
+        data = build(start, start + step - 1).execute().data
+        out.extend(data)
+        if len(data) < step:
+            break
+        start += step
+    return out
+
+
+@api.get("/admin/school-accounts")
+async def admin_school_accounts(request: Request, district_id: int = None, q: str = None, status: str = "all"):
+    """List schools with their account status. Filters: district_id, q (name), status."""
+    _require_general_admin(request)
+    client = get_service_client()
+
+    sel = ("id,name,district_id,"
+           "district:districts(name),"
+           "education_level:education_levels(name),"
+           "management_type:management_types(name),"
+           "school_type:school_types(name)")
+
+    def build_schools(a, b):
+        qb = client.table("schools").select(sel)
+        if district_id is not None:
+            qb = qb.eq("district_id", district_id)
+        if q:
+            qb = qb.ilike("name", f"%{q}%")
+        return qb.order("name").range(a, b)
+
+    schools = _fetch_all(build_schools)
+
+    accounts = _fetch_all(
+        lambda a, b: client.table("school_accounts").select("school_id,username,is_active").range(a, b)
+    )
+    acc_by_school = {r["school_id"]: r for r in accounts}
+
+    items = []
+    for s in schools:
+        acc = acc_by_school.get(s["id"])
+        has_account = acc is not None
+        if status == "has" and not has_account:
+            continue
+        if status == "none" and has_account:
+            continue
+        items.append({
+            "school_id": s["id"],
+            "name": s["name"],
+            "district": (s.get("district") or {}).get("name"),
+            "education_level": (s.get("education_level") or {}).get("name"),
+            "school_type": (s.get("school_type") or {}).get("name"),
+            "management_type": (s.get("management_type") or {}).get("name"),
+            "has_account": has_account,
+            "username": acc["username"] if has_account else None,
+            "account_active": acc["is_active"] if has_account else None,
+        })
+
+    total = len(items)
+    with_acc = sum(1 for i in items if i["has_account"])
+    return {"summary": {"total": total, "with_account": with_acc, "without_account": total - with_acc}, "items": items}
+
+
+@api.post("/admin/school-accounts")
+async def create_school_account(request: Request):
+    """Create a Supabase Auth user + school_accounts row for a school without one.
+
+    Backend-only (service client). Atomic-ish: if the DB row fails after the
+    Auth user is created, the Auth user is deleted (no orphan). Returns the
+    temp password ONCE; it is never stored in any application table.
+    """
+    _require_general_admin(request)
+    body = await request.json()
+    school_id = (body or {}).get("school_id")
+    if not school_id:
+        raise HTTPException(status_code=400, detail="school_id gerekli.")
+
+    client = get_service_client()
+
+    # 1) School must exist.
+    srows = client.table("schools").select("id,name,district:districts(name)").eq("id", school_id).limit(1).execute().data
+    if not srows:
+        raise HTTPException(status_code=404, detail="Okul bulunamadı.")
+    school = srows[0]
+    school_name = school["name"]
+    district_name = (school.get("district") or {}).get("name") or ""
+
+    # 2) No existing account for this school.
+    existing_for_school = client.table("school_accounts").select("id").eq("school_id", school_id).limit(1).execute().data
+    if existing_for_school:
+        raise HTTPException(status_code=409, detail="Bu okulun zaten bir hesabı var.")
+
+    # 3) Unique (case-insensitive) username.
+    existing_usernames = _fetch_all(
+        lambda a, b: client.table("school_accounts").select("username").range(a, b)
+    )
+    existing_lower = {r["username"].lower() for r in existing_usernames}
+    username = generate_username(school_name, district_name, existing_lower)
+
+    # 4) Strong temp password + synthetic emailless identity.
+    temp_password = generate_temp_password()
+    synth_email = synth_email_for(username)
+
+    # 5) Create Auth user.
+    try:
+        created = client.auth.admin.create_user({
+            "email": synth_email,
+            "password": temp_password,
+            "email_confirm": True,
+            "user_metadata": {"username": username, "school_id": school_id, "kind": "school"},
+        })
+        auth_user = getattr(created, "user", None)
+        auth_user_id = getattr(auth_user, "id", None)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Auth user creation failed")
+        raise HTTPException(status_code=500, detail=f"Auth kullanıcısı oluşturulamadı: {e}")
+    if not auth_user_id:
+        raise HTTPException(status_code=500, detail="Auth kullanıcısı oluşturulamadı.")
+
+    # 6) Insert school_accounts row; on failure, clean up the Auth user.
+    try:
+        client.table("school_accounts").insert({
+            "school_id": school_id,
+            "auth_user_id": auth_user_id,
+            "username": username,
+            "is_active": True,
+            "must_change_password": True,
+        }).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("school_accounts insert failed; rolling back Auth user")
+        try:
+            client.auth.admin.delete_user(auth_user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Auth user cleanup failed (orphan risk)")
+        raise HTTPException(status_code=500, detail=f"Hesap kaydı oluşturulamadı, işlem geri alındı: {e}")
+
+    # 7) Return the credentials ONCE (password never persisted in app tables).
+    return {
+        "school_name": school_name,
+        "username": username,
+        "temp_password": temp_password,
+    }
 
 
 app.include_router(api)
