@@ -1065,6 +1065,278 @@ def _cleanup_students(client, student_ids, school_id):
         logger.exception("student cleanup failed (orphan risk)")
 
 
+@api.get("/school/risk/init")
+async def school_risk_init(request: Request):
+    """Bootstrap data for the Risk Map entry screen: school info, active
+    academic year, the school's classes, and the 36 active risk categories.
+    Scoped strictly by token->school_id.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    ctx = _school_context(client, school_id)
+
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi. Lütfen RAM ile iletişime geçin.")
+
+    classes = (
+        client.table("school_classes")
+        .select("id,level,branch")
+        .eq("school_id", school_id)
+        .order("level")
+        .order("branch")
+        .execute()
+        .data
+    )
+    categories = (
+        client.table("risk_categories")
+        .select("id,code,label,requires_note,sort_order")
+        .eq("is_active", True)
+        .order("sort_order")
+        .execute()
+        .data
+    )
+    return {
+        "school_name": ctx["school_name"],
+        "district": ctx["district"],
+        "academic_year": year["name"],
+        "classes": classes,
+        "categories": categories,
+    }
+
+
+def _validate_own_class(client, school_id, school_class_id):
+    rows = (
+        client.table("school_classes")
+        .select("id,school_id,level,branch")
+        .eq("id", school_class_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    cls = rows[0] if rows else None
+    if cls is None or cls["school_id"] != school_id:
+        raise HTTPException(status_code=400, detail="Seçilen sınıf bu okula ait değil.")
+    return cls
+
+
+@api.get("/school/risk/students")
+async def school_risk_students(request: Request, school_class_id: str):
+    """Active students enrolled in the chosen class for the active year.
+
+    students -> student_class_enrollments (active year + chosen class) ->
+    status = 'active'. Scoped by token->school_id.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi.")
+
+    cls = _validate_own_class(client, school_id, school_class_id)
+
+    enr = (
+        client.table("student_class_enrollments")
+        .select("student_id")
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year["id"])
+        .eq("school_class_id", school_class_id)
+        .execute()
+        .data
+    )
+    student_ids = [e["student_id"] for e in enr]
+    students = []
+    if student_ids:
+        rows = (
+            client.table("students")
+            .select("id,student_number,first_name,last_name,status")
+            .eq("school_id", school_id)
+            .in_("id", student_ids)
+            .eq("status", "active")
+            .order("student_number")
+            .execute()
+            .data
+        )
+        students = [
+            {
+                "id": s["id"],
+                "student_number": s["student_number"],
+                "first_name": s["first_name"],
+                "last_name": s["last_name"],
+            }
+            for s in rows
+        ]
+
+    return {
+        "class_label": f"{cls['level']}/{cls['branch']}",
+        "school_class_id": school_class_id,
+        "students": students,
+    }
+
+
+def _student_in_school(client, school_id, student_id):
+    rows = (
+        client.table("students")
+        .select("id,student_number,first_name,last_name,school_id,status")
+        .eq("id", student_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows:
+        raise HTTPException(status_code=400, detail="Öğrenci bu okula ait değil.")
+    return rows[0]
+
+
+@api.get("/school/risk/student/{student_id}")
+async def school_risk_student_detail(request: Request, student_id: str):
+    """Student header (with class label for the active year) + currently
+    marked risk category ids/notes for the active year."""
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi.")
+
+    student = _student_in_school(client, school_id, student_id)
+
+    enr = (
+        client.table("student_class_enrollments")
+        .select("school_class:school_classes(level,branch)")
+        .eq("student_id", student_id)
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year["id"])
+        .limit(1)
+        .execute()
+        .data
+    )
+    class_label = None
+    if enr:
+        sc = enr[0].get("school_class") or {}
+        if sc:
+            class_label = f"{sc['level']}/{sc['branch']}"
+
+    marks = (
+        client.table("student_risks")
+        .select("risk_category_id,note")
+        .eq("student_id", student_id)
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year["id"])
+        .execute()
+        .data
+    )
+
+    return {
+        "student": {
+            "id": student["id"],
+            "student_number": student["student_number"],
+            "first_name": student["first_name"],
+            "last_name": student["last_name"],
+            "class_label": class_label,
+        },
+        "selected": [{"risk_category_id": m["risk_category_id"], "note": m.get("note")} for m in marks],
+    }
+
+
+@api.post("/school/risk/save")
+async def school_risk_save(request: Request):
+    """Reconcile a student's marked risks for the active academic year.
+
+    Server resolves school_id + academic_year_id (frontend values ignored).
+    Validates the student belongs to the school and has an active-year
+    enrollment, validates every submitted risk_category_id is active, and
+    enforces the requires_note rule. Then replaces the student's risk rows
+    for (student_id, school_id, academic_year_id): only marked items are
+    stored; unmarked ones are removed. No other student/school/year is
+    touched.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi.")
+
+    body = await request.json()
+    student_id = (body or {}).get("student_id")
+    risks = (body or {}).get("risks") or []
+    if not student_id:
+        raise HTTPException(status_code=400, detail="Öğrenci seçilmedi.")
+
+    # Student belongs to this school.
+    _student_in_school(client, school_id, student_id)
+
+    # Student has an enrollment for the active year (so class context exists).
+    enr = (
+        client.table("student_class_enrollments")
+        .select("id")
+        .eq("student_id", student_id)
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year["id"])
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not enr:
+        raise HTTPException(status_code=400, detail="Öğrencinin aktif eğitim yılında sınıf kaydı bulunmuyor.")
+
+    # Active risk categories -> {id: requires_note}.
+    cats = (
+        client.table("risk_categories")
+        .select("id,requires_note")
+        .eq("is_active", True)
+        .execute()
+        .data
+    )
+    requires_note_by_id = {c["id"]: c["requires_note"] for c in cats}
+
+    # Validate + build payloads (dedupe by category).
+    payloads = {}
+    for item in risks:
+        rc_id = (item or {}).get("risk_category_id")
+        if rc_id not in requires_note_by_id:
+            raise HTTPException(status_code=400, detail="Geçersiz risk maddesi gönderildi.")
+        note_raw = (item or {}).get("note")
+        note = (str(note_raw).strip() if note_raw is not None else "")
+        if requires_note_by_id[rc_id]:
+            if not note:
+                raise HTTPException(status_code=400, detail="Açıklama gerektiren risk maddesi için açıklama boş bırakılamaz.")
+            payloads[rc_id] = {
+                "student_id": student_id,
+                "school_id": school_id,
+                "academic_year_id": year["id"],
+                "risk_category_id": rc_id,
+                "note": note,
+            }
+        else:
+            payloads[rc_id] = {
+                "student_id": student_id,
+                "school_id": school_id,
+                "academic_year_id": year["id"],
+                "risk_category_id": rc_id,
+                "note": None,
+            }
+
+    # Replace this student's active-year risk rows (scoped delete + insert).
+    try:
+        client.table("student_risks").delete() \
+            .eq("student_id", student_id) \
+            .eq("school_id", school_id) \
+            .eq("academic_year_id", year["id"]) \
+            .execute()
+        if payloads:
+            client.table("student_risks").insert(list(payloads.values())).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("risk save failed")
+        raise HTTPException(status_code=500, detail="Risk bilgileri kaydedilemedi. Lütfen tekrar deneyin.")
+
+    return {"saved": len(payloads), "message": "Risk bilgileri kaydedildi."}
+
+
 app.include_router(api)
 
 app.add_middleware(

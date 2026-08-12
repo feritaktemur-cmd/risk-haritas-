@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { School, Loader2, LogOut, MapPin, LayoutGrid, Users } from "lucide-react";
+import { School, Loader2, LogOut, MapPin, LayoutGrid, Users, ShieldAlert } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -114,6 +114,20 @@ export default function SchoolHome() {
             <span>
               <span className="block text-sm font-bold text-white">Öğrenciler</span>
               <span className="block text-xs text-slate-400">Öğrenci listesini görüntüle ve öğrenci ekle</span>
+            </span>
+          </button>
+
+          <button
+            onClick={() => navigate("/school/risk-entry")}
+            data-testid="nav-risk-entry"
+            className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-4 text-left transition hover:border-rose-400/40 hover:bg-white/[0.06]"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-rose-500/15 text-rose-300">
+              <ShieldAlert size={20} />
+            </span>
+            <span>
+              <span className="block text-sm font-bold text-white">Risk Haritası Veri Girişi</span>
+              <span className="block text-xs text-slate-400">Öğrencilerin risk haritası verilerini girin ve düzenleyin.</span>
             </span>
           </button>
         </div>
