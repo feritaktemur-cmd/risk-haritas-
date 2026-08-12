@@ -935,6 +935,136 @@ async def school_students_preview(request: Request, file: UploadFile = File(...)
     }
 
 
+@api.post("/school/students/import")
+async def school_students_import(request: Request, file: UploadFile = File(...)):
+    """Bulk-import students + current-year enrollments from an Excel file.
+
+    All-or-nothing: the backend RE-VALIDATES every row (frontend preview is
+    never trusted). If any row is invalid, NOTHING is written. Students are
+    inserted in a single bulk statement, then enrollments in a single bulk
+    statement; if the enrollment step fails, the students created by THIS
+    request are removed (no partial import, no touching pre-existing data).
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    fname = (file.filename or "").lower()
+    if not fname.endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Lütfen bir Excel dosyası (.xlsx) yükleyin.")
+
+    ctx = _school_context(client, school_id)
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi. Lütfen RAM ile iletişime geçin.")
+
+    classes = (
+        client.table("school_classes")
+        .select("id,level,branch")
+        .eq("school_id", school_id)
+        .execute()
+        .data
+    )
+    defined_classes = {(c["level"], c["branch"]) for c in classes}
+    class_id_map = {(c["level"], c["branch"]): c["id"] for c in classes}
+
+    existing = (
+        client.table("students")
+        .select("student_number")
+        .eq("school_id", school_id)
+        .execute()
+        .data
+    )
+    existing_numbers = {str(s["student_number"]).strip() for s in existing}
+
+    content = await file.read()
+    try:
+        result = analyze_student_rows(content, ctx["is_preschool"], defined_classes, existing_numbers)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Student Excel re-analysis failed")
+        raise HTTPException(status_code=400, detail=f"Excel çözümlenemedi: {e}")
+
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    summary = result["summary"]
+    rows = result["rows"]
+    if summary["invalid"] > 0:
+        raise HTTPException(status_code=400, detail="Hatalı satırlar düzeltilmeden aktarım yapılamaz. Lütfen dosyayı düzeltip yeniden ön izleyin.")
+    if summary["total"] == 0:
+        raise HTTPException(status_code=400, detail="Dosyada aktarılacak satır bulunamadı.")
+
+    # Build student payloads + resolve each row's class id (server-side).
+    student_payloads = []
+    class_by_number = {}
+    for r in rows:
+        number = r["student_number"].strip()
+        level_int = int(float(r["level"]))
+        branch = r["branch"].strip().upper()
+        class_id = class_id_map.get((level_int, branch))
+        if class_id is None:
+            # Should never happen after re-validation; guard anyway.
+            raise HTTPException(status_code=400, detail="Bu sınıf okulda tanımlı değil.")
+        class_by_number[number] = class_id
+        student_payloads.append({
+            "school_id": school_id,
+            "student_number": number,
+            "first_name": r["first_name"].strip(),
+            "last_name": r["last_name"].strip(),
+            "status": "active",
+        })
+
+    # 1) Bulk insert students (single atomic statement).
+    try:
+        created = client.table("students").insert(student_payloads).execute().data
+    except Exception as e:  # noqa: BLE001
+        logger.exception("bulk student insert failed")
+        raise HTTPException(status_code=409, detail="Dosya aktarılırken bir çakışma oluştu. Hiçbir kayıt aktarılmadı. Dosyayı yeniden ön izleyin.")
+    if not created or len(created) != len(student_payloads):
+        # Roll back whatever was created, if anything, then fail cleanly.
+        _cleanup_students(client, [c["id"] for c in (created or [])], school_id)
+        raise HTTPException(status_code=500, detail="Aktarım tamamlanamadı. Hiçbir kayıt aktarılmadı. Dosyayı yeniden ön izleyin.")
+
+    created_ids = [c["id"] for c in created]
+
+    # 2) Build + bulk insert enrollments (single atomic statement).
+    enrollment_payloads = [
+        {
+            "student_id": c["id"],
+            "school_id": school_id,
+            "academic_year_id": year["id"],
+            "school_class_id": class_by_number[str(c["student_number"]).strip()],
+        }
+        for c in created
+    ]
+    try:
+        client.table("student_class_enrollments").insert(enrollment_payloads).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("bulk enrollment insert failed; rolling back students from this request")
+        _cleanup_students(client, created_ids, school_id)
+        raise HTTPException(status_code=409, detail="Dosya aktarılırken bir çakışma oluştu. Hiçbir kayıt aktarılmadı. Dosyayı yeniden ön izleyin.")
+
+    return {"imported": len(created_ids), "message": "Öğrenciler başarıyla aktarıldı."}
+
+
+def _cleanup_students(client, student_ids, school_id):
+    """Remove ONLY the students/enrollments created by the current import.
+
+    Enrollments first (FK RESTRICT), then students. Scoped by school_id and
+    the exact id list — never touches pre-existing data.
+    """
+    if not student_ids:
+        return
+    try:
+        client.table("student_class_enrollments").delete().in_("student_id", student_ids).eq("school_id", school_id).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("enrollment cleanup failed")
+    try:
+        client.table("students").delete().in_("id", student_ids).eq("school_id", school_id).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("student cleanup failed (orphan risk)")
+
+
 app.include_router(api)
 
 app.add_middleware(

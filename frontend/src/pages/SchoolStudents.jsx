@@ -35,6 +35,9 @@ export default function SchoolStudents() {
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState(null); // {summary, rows}
   const [previewError, setPreviewError] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState(null);
+  const [fileKey, setFileKey] = useState(0);
 
   const load = useCallback(async (searchTerm) => {
     const h = await authHeader();
@@ -115,6 +118,7 @@ export default function SchoolStudents() {
     e.preventDefault();
     setPreviewError(null);
     setPreview(null);
+    setImportMsg(null);
     if (!file) {
       setPreviewError("Lütfen bir Excel (.xlsx) dosyası seçin.");
       return;
@@ -131,6 +135,29 @@ export default function SchoolStudents() {
       setPreviewError(err.response?.data?.detail || "Ön izleme oluşturulamadı.");
     }
     setPreviewing(false);
+  };
+
+  const runImport = async () => {
+    if (!file || !preview || preview.summary.invalid > 0 || preview.summary.total === 0) return;
+    setPreviewError(null);
+    setImportMsg(null);
+    setImporting(true);
+    try {
+      const h = await authHeader();
+      if (!h) return navigate("/school/login", { replace: true });
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await axios.post(`${API}/school/students/import`, fd, { headers: h });
+      // Success: reset the preview/file so the same file can't be re-imported by one click.
+      setImportMsg(`${res.data.message} Aktarılan öğrenci sayısı: ${res.data.imported}`);
+      setPreview(null);
+      setFile(null);
+      setFileKey((k) => k + 1);
+      await load(q.trim());
+    } catch (err) {
+      setPreviewError(err.response?.data?.detail || "Aktarım yapılamadı.");
+    }
+    setImporting(false);
   };
 
   if (!ready || !info) {
@@ -258,7 +285,8 @@ export default function SchoolStudents() {
             <input
               type="file"
               accept=".xlsx"
-              onChange={(e) => { setFile(e.target.files?.[0] || null); setPreview(null); setPreviewError(null); }}
+              key={fileKey}
+              onChange={(e) => { setFile(e.target.files?.[0] || null); setPreview(null); setPreviewError(null); setImportMsg(null); }}
               data-testid="students-excel-file"
               className="text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-white/20"
             />
@@ -279,13 +307,34 @@ export default function SchoolStudents() {
             </div>
           )}
 
+          {importMsg && (
+            <div data-testid="students-import-success" className="mt-4 rounded-xl bg-emerald-500/10 p-3 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-400/20">
+              {importMsg}
+            </div>
+          )}
+
           {preview && (
             <div className="mt-5" data-testid="students-preview-result">
-              <div className="mb-4 flex flex-wrap gap-3 text-sm">
+              <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
                 <span className="rounded-lg bg-white/[0.06] px-3 py-1.5 font-semibold text-slate-200 ring-1 ring-white/10" data-testid="preview-total">Toplam: {preview.summary.total}</span>
                 <span className="rounded-lg bg-emerald-500/15 px-3 py-1.5 font-semibold text-emerald-300 ring-1 ring-emerald-400/30" data-testid="preview-valid">Geçerli: {preview.summary.valid}</span>
                 <span className="rounded-lg bg-rose-500/15 px-3 py-1.5 font-semibold text-rose-300 ring-1 ring-rose-400/30" data-testid="preview-invalid">Hatalı: {preview.summary.invalid}</span>
+                <button
+                  type="button"
+                  onClick={runImport}
+                  disabled={importing || preview.summary.invalid > 0 || preview.summary.total === 0}
+                  data-testid="students-import-btn"
+                  className="ml-auto inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {importing ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+                  Öğrencileri Aktar
+                </button>
               </div>
+              {preview.summary.invalid > 0 && (
+                <p className="mb-3 text-xs text-amber-300/90" data-testid="students-import-blocked">
+                  Hatalı satırlar düzeltilmeden aktarım yapılamaz. Dosyayı düzeltip yeniden ön izleyin.
+                </p>
+              )}
               <div className="overflow-hidden rounded-xl border border-white/10">
                 <table className="w-full text-left text-sm" data-testid="students-preview-table">
                   <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
