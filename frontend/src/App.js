@@ -11,6 +11,7 @@ import SchoolLogin from "./pages/SchoolLogin";
 import SchoolChangePassword from "./pages/SchoolChangePassword";
 import SchoolHome from "./pages/SchoolHome";
 import SchoolClasses from "./pages/SchoolClasses";
+import SchoolStudents from "./pages/SchoolStudents";
 import "./App.css";
 
 function NavItem({ to, icon: Icon, label }) {
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="/school/change-password" element={<SchoolChangePassword />} />
         <Route path="/school" element={<SchoolHome />} />
         <Route path="/school/classes" element={<SchoolClasses />} />
+        <Route path="/school/students" element={<SchoolStudents />} />
         <Route path="/" element={<Navigate to="/school/login" replace />} />
         <Route path="/status" element={<Shell><ConnectionStatus /></Shell>} />
       </Routes>

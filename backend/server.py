@@ -676,6 +676,204 @@ async def school_classes_delete(class_id: str, request: Request):
     return {"ok": True}
 
 
+def _active_academic_year(client):
+    """Resolve the single active academic year via academic_years.is_active.
+
+    Migration 001 guarantees at most one active year (partial unique index).
+    Returns the row {id,name} or None if none is marked active.
+    """
+    rows = (
+        client.table("academic_years")
+        .select("id,name")
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return rows[0] if rows else None
+
+
+@api.get("/school/students")
+async def school_students_list(request: Request, q: str = None):
+    """List the logged-in school's students for the active academic year.
+
+    Scoped strictly by token->school_id. Also returns the school's own
+    classes (for the add form) and the active year. Optional simple search
+    over student_number / first_name / last_name.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    ctx = _school_context(client, school_id)
+
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi. Lütfen RAM ile iletişime geçin.")
+
+    # School's own classes (for the add-student dropdown).
+    classes = (
+        client.table("school_classes")
+        .select("id,level,branch")
+        .eq("school_id", school_id)
+        .order("level")
+        .order("branch")
+        .execute()
+        .data
+    )
+
+    # Students of this school (optional search).
+    qb = client.table("students").select("id,student_number,first_name,last_name,status").eq("school_id", school_id)
+    term = (q or "").strip()
+    if term:
+        safe = term.replace(",", " ").replace("%", "").replace("(", "").replace(")", "")
+        qb = qb.or_(
+            f"student_number.ilike.%{safe}%,first_name.ilike.%{safe}%,last_name.ilike.%{safe}%"
+        )
+    students = qb.order("last_name").order("first_name").execute().data
+
+    # Current-year enrollments -> class label per student.
+    enr = (
+        client.table("student_class_enrollments")
+        .select("student_id,school_class:school_classes(level,branch)")
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year["id"])
+        .execute()
+        .data
+    )
+    class_by_student = {}
+    for e in enr:
+        sc = e.get("school_class") or {}
+        if sc:
+            class_by_student[e["student_id"]] = f"{sc['level']}/{sc['branch']}"
+
+    items = [
+        {
+            "id": s["id"],
+            "student_number": s["student_number"],
+            "first_name": s["first_name"],
+            "last_name": s["last_name"],
+            "status": s["status"],
+            "class_label": class_by_student.get(s["id"]),
+        }
+        for s in students
+    ]
+
+    return {
+        "school_name": ctx["school_name"],
+        "district": ctx["district"],
+        "academic_year": year["name"],
+        "classes": classes,
+        "students": items,
+    }
+
+
+@api.post("/school/students")
+async def school_students_create(request: Request):
+    """Create one student + its current-year class enrollment.
+
+    school_id and academic_year_id are resolved server-side. The chosen
+    school_class_id is validated to belong to the logged-in school. If the
+    enrollment insert fails, the just-created student is removed (no orphan).
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    body = await request.json()
+    student_number = str((body or {}).get("student_number", "")).strip()
+    first_name = str((body or {}).get("first_name", "")).strip()
+    last_name = str((body or {}).get("last_name", "")).strip()
+    school_class_id = (body or {}).get("school_class_id")
+
+    if not student_number:
+        raise HTTPException(status_code=400, detail="Öğrenci numarası gerekli.")
+    if not first_name:
+        raise HTTPException(status_code=400, detail="Ad gerekli.")
+    if not last_name:
+        raise HTTPException(status_code=400, detail="Soyad gerekli.")
+    if not school_class_id:
+        raise HTTPException(status_code=400, detail="Sınıf seçimi gerekli.")
+
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi. Lütfen RAM ile iletişime geçin.")
+
+    # Chosen class must belong to THIS school (never trust the frontend).
+    crows = (
+        client.table("school_classes")
+        .select("id,school_id")
+        .eq("id", school_class_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    cls = crows[0] if crows else None
+    if cls is None or cls["school_id"] != school_id:
+        raise HTTPException(status_code=400, detail="Seçilen sınıf bu okula ait değil.")
+
+    # Friendly duplicate handling for UNIQUE (school_id, student_number).
+    dup = (
+        client.table("students")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("student_number", student_number)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if dup:
+        raise HTTPException(status_code=409, detail="Bu öğrenci numarası zaten kayıtlı.")
+
+    # 1) Insert the student.
+    try:
+        srows = (
+            client.table("students")
+            .insert({
+                "school_id": school_id,
+                "student_number": student_number,
+                "first_name": first_name,
+                "last_name": last_name,
+                "status": "active",
+            })
+            .execute()
+            .data
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("student insert failed")
+        msg = str(e).lower()
+        if "uq_students_school_student_number" in msg or "duplicate" in msg or "unique" in msg:
+            raise HTTPException(status_code=409, detail="Bu öğrenci numarası zaten kayıtlı.")
+        raise HTTPException(status_code=500, detail="Öğrenci oluşturulamadı.")
+    student = srows[0] if srows else None
+    if not student:
+        raise HTTPException(status_code=500, detail="Öğrenci oluşturulamadı.")
+    student_id = student["id"]
+
+    # 2) Insert the enrollment; on failure, roll back the student.
+    try:
+        client.table("student_class_enrollments").insert({
+            "student_id": student_id,
+            "school_id": school_id,
+            "academic_year_id": year["id"],
+            "school_class_id": school_class_id,
+        }).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("enrollment insert failed; rolling back student")
+        try:
+            client.table("students").delete().eq("id", student_id).eq("school_id", school_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("student cleanup failed (orphan risk)")
+        raise HTTPException(status_code=500, detail="Öğrenci sınıfa atanamadı, işlem geri alındı. Lütfen tekrar deneyin.")
+
+    return {
+        "id": student_id,
+        "student_number": student_number,
+        "first_name": first_name,
+        "last_name": last_name,
+        "status": "active",
+    }
+
+
 app.include_router(api)
 
 app.add_middleware(
