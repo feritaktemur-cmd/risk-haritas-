@@ -1,0 +1,467 @@
+ANALYSIS
+
+original_problem_statement:
+Build a web application for creating and analyzing School Risk Maps used by Guidance and Research Centers (RAM) and schools. The system requires secure login for RAM administrators and school users. Schools will enter student risk data through class-based forms, which automatically generate School Risk Maps. RAM administrators will view aggregated statistics without seeing individual student data. Features include analyzing risk distributions by education level, school type, district, etc.
+
+PRODUCT REQUIREMENTS:
+Fresh build connecting to an existing Supabase project. Supabase handles database, authentication, and storage. Follow a backend-first architecture for sensitive operations. Initially, only configure the connection without generating database tables or migrations until explicitly instructed.
+
+User's preferred language:
+Turkish (Türkçe).
+
+INSTRUCT NEXT AGENT:
+You MUST respond to the user in Turkish only.
+
+CURRENT PROJECT STATE:
+
+A full-stack React + FastAPI application connected to Supabase.
+
+Database schema has been built through Migration 008, which was manually executed by the user in Supabase SQL Editor.
+
+Current functionality includes:
+
+- Excel-based school preview/import system
+- General Admin login and protected admin dashboard
+- School Account management
+- Automatic school username generation
+- Synthetic Auth email generation
+- Automatic temporary password generation
+- School login with username + password
+- Mandatory password change on first school login
+- Protected School Panel
+- School Class Definitions management
+- Protected School Import screen inside the General Admin area
+
+CURRENT ROUTE ARCHITECTURE:
+
+General Admin:
+- /admin/login
+- /admin
+- /admin/school-accounts
+- /admin/school-import
+
+School:
+- /school/login
+- /school/change-password
+- /school
+- /school/classes
+
+Legacy/root:
+- / currently still displays SchoolImportPreview.
+- This is intentional temporary technical debt.
+- The next cleanup task is to redirect or repurpose / now that School Import officially exists at /admin/school-import.
+
+LAST COMPLETED ITEM:
+
+Moved the existing Okul İçe Aktarma (School Import) screen into the protected General Admin area at:
+
+/admin/school-import
+
+Implementation:
+- Existing SchoolImportPreview component was reused.
+- AdminSchoolImport.jsx provides the General Admin authorization gate and admin wrapper.
+- /admin dashboard now contains an Okul İçe Aktarma card.
+- Backend school import endpoints/parser were NOT modified.
+- Root / was intentionally left unchanged.
+
+USER MANUAL VERIFICATION:
+YES.
+
+The user manually verified in Preview that:
+- /admin dashboard renders correctly.
+- Okul Hesapları card is present.
+- Okul İçe Aktarma card is present.
+- Admin-side structure looks correct.
+
+The user performs functional verification manually via Preview.
+
+COMPLETED WORK:
+
+- Supabase backend + frontend connection — DONE
+- Migrations 001–005 — DONE
+- Excel Preview and School Import System — DONE
+- Migration 006: school_accounts — DONE
+- Migration 007: admin_profiles — DONE
+- General Admin Login Flow — DONE
+- General Admin Dashboard — DONE
+- School Accounts Management — DONE
+- Native select/option dark theme CSS fix — DONE
+- School Login — DONE
+- Mandatory First Password Change — DONE
+- School Panel — DONE
+- Migration 008: school_classes — DONE
+- School Classes Management — DONE
+- School Import moved into General Admin area — DONE
+
+MIGRATION 008 STATUS:
+
+Migration 008 was manually executed by the user and manually verified.
+
+public.school_classes:
+
+- id UUID PRIMARY KEY
+- school_id UUID NOT NULL → schools(id) ON DELETE RESTRICT
+- level SMALLINT NOT NULL CHECK 1–12
+- branch TEXT NOT NULL CHECK single uppercase Latin A–Z
+- UNIQUE (school_id, level, branch)
+- created_at
+- updated_at
+- updated_at trigger active
+- RLS enabled
+- policy count = 0
+
+The user manually confirmed:
+- constraints exist correctly
+- RLS is enabled
+- policy count is 0
+- school_classes_set_updated_at trigger is enabled
+
+SCHOOL CLASSES MANUAL TEST STATUS:
+
+The user manually tested /school/classes in Preview.
+
+Confirmed working:
+
+Normal school:
+- Level dropdown contains 1–12
+- Branch dropdown contains A–Z
+- Creating 9/A works
+- Duplicate 9/A is rejected with Bu sınıf zaten tanımlı.
+- Deleting 9/A works
+- Delete confirmation works
+
+Preschool:
+- Preschool behavior manually tested and confirmed
+- Field becomes Yaş Grubu
+- Only 4 and 5 are available
+- Branch remains A–Z
+
+School Classes v1 is therefore manually verified as working.
+
+SCHOOL ACCOUNT / LOGIN STATUS:
+
+School Accounts v1 is manually verified.
+
+A real school test account was created successfully.
+
+Username generation example:
+15 TEMMUZ ŞEHİTLERİ ANADOLU LİSESİ
+→ 15temmuzsehitlerianadolulisesi
+
+Synthetic Auth identity:
+{username}@okul.pdrpusula.local
+
+Synthetic email is a backend implementation detail and MUST NOT be exposed to school users.
+
+Auth user is created with email_confirm=True.
+
+Temporary password:
+- generated securely
+- displayed only once
+- never stored plaintext in application tables
+
+School first-login flow manually verified:
+
+temporary password
+→ /school/change-password
+→ new password
+→ must_change_password=false
+→ subsequent login goes directly to /school
+
+Password rule:
+- minimum 8 characters
+- at least one letter
+- at least one number
+- uppercase/special character not required
+
+SCHOOL CLASS AUTHORIZATION:
+
+Never trust a school_id supplied by frontend.
+
+School identity must always be derived server-side:
+
+Bearer access token
+→ Supabase Auth user
+→ school_accounts.auth_user_id
+→ active school account
+→ school_id
+
+School class operations must always be scoped to this token-derived school_id.
+
+A school must never be able to read/create/delete another school's classes.
+
+GENERAL ADMIN AUTHORIZATION:
+
+General Admin authorization is backend-first.
+
+Bearer token
+→ Supabase Auth verification
+→ admin_profiles
+→ is_active=true
+→ role='general_admin'
+
+Frontend route guards are convenience only.
+Final authorization decision belongs to backend.
+
+KEY DATABASE TABLES:
+
+districts:
+{id, name, is_active}
+
+schools:
+{id, mernis_address_code, name, district_id, education_level_id, management_type_id, school_type_id, is_active}
+
+school_accounts:
+{id, school_id, auth_user_id, username, is_active, must_change_password}
+
+admin_profiles:
+{id, auth_user_id, full_name, role, district_id, is_active}
+
+school_classes:
+{id, school_id, level, branch, created_at, updated_at}
+
+KEY BACKEND ENDPOINTS:
+
+POST /api/schools/preview
+POST /api/schools/import
+
+GET /api/admin/me
+
+GET /api/admin/school-accounts
+POST /api/admin/school-accounts
+
+POST /api/school/login
+GET /api/school/session
+GET /api/school/panel
+POST /api/school/change-password
+
+GET /api/school/classes
+POST /api/school/classes
+DELETE /api/school/classes/{class_id}
+
+CODE ARCHITECTURE:
+
+/app/backend/
+- server.py
+- supabase_client.py
+- excel_preview.py
+- admin_accounts.py
+- .env
+
+/app/frontend/src/
+- App.js
+- index.css
+- lib/supabaseClient.js
+
+pages include:
+- AdminLogin.jsx
+- AdminHome.jsx
+- AdminSchoolImport.jsx
+- SchoolAccounts.jsx
+- SchoolLogin.jsx
+- SchoolChangePassword.jsx
+- SchoolHome.jsx
+- SchoolClasses.jsx
+- SchoolImportPreview.jsx
+- ConnectionStatus.jsx
+
+/app/supabase/migrations/
+- 001_reference_tables.sql
+- 002_districts.sql
+- 003_schools.sql
+- 004_remove_mernis_unique.sql
+- 005_seed_school_types.sql
+- 006_school_accounts.sql
+- 007_admin_profiles.sql
+- 008_school_classes.sql
+
+CRITICAL WORKING RULE — MIGRATIONS:
+
+All SQL migrations are MANUAL.
+
+If a schema/database change is required:
+
+1. Agent creates the migration SQL file only.
+2. Agent shows/reports the SQL.
+3. Agent MUST NOT execute the migration.
+4. User manually runs it in Supabase SQL Editor.
+5. User manually verifies results.
+6. Only after user confirmation may development continue.
+
+Never execute DDL/schema migrations via bash, Python, Supabase tooling, or autonomous tools.
+
+CRITICAL WORKING RULE — TESTING:
+
+DO NOT use testing_agent.
+
+DO NOT run automated functional tests.
+
+DO NOT run autonomous verification, deep research, screenshot testing, curl verification, or additional testing tools unless the USER EXPLICITLY requests them.
+
+Do not create test records merely to verify a feature.
+
+The user performs Preview functional testing manually.
+
+Agent responsibility:
+- implement the explicitly requested small task
+- report exactly what changed
+- stop
+- wait for user manual verification
+
+Do not spend credits on autonomous testing or investigation unless explicitly requested.
+
+CRITICAL WORKING RULE — DEVELOPMENT WORKFLOW:
+
+Use this workflow strictly:
+
+ONE SMALL TASK
+→ STOP
+→ USER MANUALLY TESTS IN PREVIEW
+→ if successful, USER CONFIRMS / CREATES GITHUB CHECKPOINT
+→ only then proceed to the next task.
+
+Keep every task minimal.
+
+Do not bundle unrelated work.
+
+Do not opportunistically refactor working code.
+
+Do not redesign working UI unless explicitly requested.
+
+Do not modify Production merely because Preview changed.
+
+Protect working functionality.
+
+CREDIT / AGENT USAGE RULE:
+
+The user is cost-conscious and Emergent ECU consumption matters.
+
+Support confirmed that large agent tasks can cost approximately 15–18 ECU and that long chat context significantly increases cost.
+
+Therefore:
+- keep tasks small
+- avoid unnecessary analysis
+- avoid unnecessary file exploration
+- avoid testing_agent
+- avoid autonomous sub-agent/tool usage
+- avoid deep research
+- avoid unnecessary reports before implementation
+- do not perform work outside the requested scope
+
+The project was forked specifically to reduce accumulated chat context cost.
+
+RLS ARCHITECTURE:
+
+RLS is enabled on relevant sensitive tables but currently has 0 policies in several places.
+
+Backend service clients intentionally bypass RLS.
+
+Therefore authorization/isolation MUST be enforced carefully in backend application logic.
+
+Examples:
+- school data must always be filtered by token-derived school_id
+- admin actions must require server-side general_admin authorization
+
+Do NOT add RLS policies unless explicitly requested in a separate task.
+
+SYNTHETIC SCHOOL EMAIL MODEL:
+
+Schools do NOT provide or use real email addresses for login.
+
+School login is username + password.
+
+Supabase Auth technically requires an email, so backend creates:
+
+{username}@okul.pdrpusula.local
+
+This is deterministic and backend-only.
+
+Do NOT expose synthetic email in frontend UI.
+
+UPCOMING TASKS:
+
+P0 SECURITY TASK:
+Supabase support reported that the project's Supabase service_role/secret key had previously appeared in plaintext during setup.
+
+The key should be rotated safely.
+
+IMPORTANT:
+Do NOT rotate or modify the key autonomously.
+
+Safe future procedure must be planned with the user:
+- rotate key in Supabase
+- update backend environment configuration
+- verify Preview manually
+- confirm backend/admin/school flows still work
+- do not touch Production blindly
+
+P1:
+Clean up root / route.
+
+Currently / still renders SchoolImportPreview even though School Import now officially belongs under:
+
+/admin/school-import
+
+Handle root redirect/landing behavior as a separate small task.
+
+P1:
+District Admin (İlçe Admini) login and management features.
+
+P1:
+Student / Risk Form data model and entry flow.
+
+Important product principle:
+Not every student necessarily has a completed risk form.
+Do not assume class enrollment count equals form count.
+
+P1:
+Automatic School Risk Map generation and RAM aggregate analytics.
+
+RAM administrators should analyze aggregated statistics without seeing individual student information.
+
+P2:
+RLS policies.
+
+P2:
+Possible future school class editing.
+Currently class editing intentionally does not exist; incorrect classes are deleted and recreated.
+
+KNOWN CURRENT TECHNICAL DEBT:
+
+Root / still displays SchoolImportPreview.
+
+This is known and intentional until the next isolated cleanup task.
+
+No other known broken functionality.
+
+SECURITY / SCOPE PRINCIPLES:
+
+- Backend-first for sensitive operations.
+- Secret/service key never exposed to frontend.
+- Never trust frontend-provided ownership identifiers.
+- Do not reveal whether another school's resource exists.
+- Keep General Admin and School areas separated.
+- General Admin functions belong under /admin.
+- School functions belong under /school.
+- Existing School Import functionality now belongs under General Admin.
+
+CURRENT PROJECT HEALTH:
+
+Broken functionality: None known.
+
+Known regressions: None.
+
+Preview has been used successfully for manual verification.
+
+IMPORTANT NEXT-AGENT BEHAVIOR:
+
+Do not immediately start coding after this fork.
+
+Wait for the user's next explicit instruction.
+
+When a task is given:
+- perform only that task
+- make the smallest safe change
+- do not test automatically
+- report changes
+- stop for manual Preview verification.

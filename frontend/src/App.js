@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router-dom";
 import { Activity, FileSpreadsheet, MapPinned } from "lucide-react";
 import ConnectionStatus from "./pages/ConnectionStatus";
 import SchoolImportPreview from "./pages/SchoolImportPreview";
@@ -70,7 +70,7 @@ export default function App() {
         <Route path="/school/change-password" element={<SchoolChangePassword />} />
         <Route path="/school" element={<SchoolHome />} />
         <Route path="/school/classes" element={<SchoolClasses />} />
-        <Route path="/" element={<Shell><SchoolImportPreview /></Shell>} />
+        <Route path="/" element={<Navigate to="/school/login" replace />} />
         <Route path="/status" element={<Shell><ConnectionStatus /></Shell>} />
       </Routes>
     </BrowserRouter>
