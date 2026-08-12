@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from supabase_client import get_service_client, get_anon_client, SUPABASE_URL
 from excel_preview import analyze_rows, load_reference, plan_import, VALID_MANAGEMENT_TYPES
+from students_excel import analyze_student_rows
 from admin_accounts import generate_username, generate_temp_password, synth_email_for
 import re as _re
 
@@ -871,6 +872,66 @@ async def school_students_create(request: Request):
         "first_name": first_name,
         "last_name": last_name,
         "status": "active",
+    }
+
+
+@api.post("/school/students/preview")
+async def school_students_preview(request: Request, file: UploadFile = File(...)):
+    """Analyze an uploaded student Excel and return a PREVIEW only.
+
+    READ-ONLY: validates each row against the school's defined classes and
+    existing student numbers. Writes NOTHING to the database. No students or
+    enrollments are created here. Scoped strictly by token->school_id.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    fname = (file.filename or "").lower()
+    if not fname.endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Lütfen bir Excel dosyası (.xlsx) yükleyin.")
+
+    ctx = _school_context(client, school_id)
+    year = _active_academic_year(client)
+
+    # Defined classes for this school -> {(level, branch)}.
+    classes = (
+        client.table("school_classes")
+        .select("level,branch")
+        .eq("school_id", school_id)
+        .execute()
+        .data
+    )
+    defined_classes = {(c["level"], c["branch"]) for c in classes}
+
+    # Existing student numbers for this school.
+    existing = (
+        client.table("students")
+        .select("student_number")
+        .eq("school_id", school_id)
+        .execute()
+        .data
+    )
+    existing_numbers = {str(s["student_number"]).strip() for s in existing}
+
+    content = await file.read()
+    try:
+        result = analyze_student_rows(content, ctx["is_preschool"], defined_classes, existing_numbers)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Student Excel analysis failed")
+        raise HTTPException(status_code=400, detail=f"Excel çözümlenemedi: {e}")
+
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return {
+        "school_name": ctx["school_name"],
+        "district": ctx["district"],
+        "academic_year": year["name"] if year else None,
+        "summary": result["summary"],
+        "rows": result["rows"],
     }
 
 

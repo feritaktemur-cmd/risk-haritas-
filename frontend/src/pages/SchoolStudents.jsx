@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { School, Loader2, Plus, ArrowLeft, AlertTriangle, Search, Users } from "lucide-react";
+import { School, Loader2, Plus, ArrowLeft, AlertTriangle, Search, Users, FileSpreadsheet } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -29,6 +29,12 @@ export default function SchoolStudents() {
 
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState(null);
+
+  // Excel bulk preview
+  const [file, setFile] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState(null); // {summary, rows}
+  const [previewError, setPreviewError] = useState(null);
 
   const load = useCallback(async (searchTerm) => {
     const h = await authHeader();
@@ -103,6 +109,28 @@ export default function SchoolStudents() {
       setError(err.response?.data?.detail || "Öğrenci eklenemedi.");
     }
     setAdding(false);
+  };
+
+  const runPreview = async (e) => {
+    e.preventDefault();
+    setPreviewError(null);
+    setPreview(null);
+    if (!file) {
+      setPreviewError("Lütfen bir Excel (.xlsx) dosyası seçin.");
+      return;
+    }
+    setPreviewing(true);
+    try {
+      const h = await authHeader();
+      if (!h) return navigate("/school/login", { replace: true });
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await axios.post(`${API}/school/students/preview`, fd, { headers: h });
+      setPreview(res.data);
+    } catch (err) {
+      setPreviewError(err.response?.data?.detail || "Ön izleme oluşturulamadı.");
+    }
+    setPreviewing(false);
   };
 
   if (!ready || !info) {
@@ -219,6 +247,86 @@ export default function SchoolStudents() {
             </div>
           )}
         </form>
+
+        {/* Excel bulk preview */}
+        <section data-testid="students-excel-section" className="mb-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <p className="mb-4 flex items-center gap-2 text-sm font-bold text-white"><FileSpreadsheet size={16} className="text-indigo-300" /> Excel ile Toplu Yükleme</p>
+          <p className="mb-4 text-xs text-slate-400">
+            Beklenen sütunlar: <span className="text-slate-200">Öğrenci No · Ad · Soyad · Sınıf · Şube</span>. Dosyayı bu formatta hazırlayın. Bu adım yalnızca ön izleme oluşturur; kayıt yazılmaz.
+          </p>
+          <form onSubmit={runPreview} className="flex flex-wrap items-center gap-3">
+            <input
+              type="file"
+              accept=".xlsx"
+              onChange={(e) => { setFile(e.target.files?.[0] || null); setPreview(null); setPreviewError(null); }}
+              data-testid="students-excel-file"
+              className="text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-white/20"
+            />
+            <button
+              type="submit"
+              disabled={previewing}
+              data-testid="students-preview-btn"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-emerald-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:opacity-90 disabled:opacity-50"
+            >
+              {previewing ? <Loader2 size={15} className="animate-spin" /> : <FileSpreadsheet size={15} />}
+              Ön İzleme Oluştur
+            </button>
+          </form>
+
+          {previewError && (
+            <div data-testid="students-preview-error" className="mt-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{previewError}</span>
+            </div>
+          )}
+
+          {preview && (
+            <div className="mt-5" data-testid="students-preview-result">
+              <div className="mb-4 flex flex-wrap gap-3 text-sm">
+                <span className="rounded-lg bg-white/[0.06] px-3 py-1.5 font-semibold text-slate-200 ring-1 ring-white/10" data-testid="preview-total">Toplam: {preview.summary.total}</span>
+                <span className="rounded-lg bg-emerald-500/15 px-3 py-1.5 font-semibold text-emerald-300 ring-1 ring-emerald-400/30" data-testid="preview-valid">Geçerli: {preview.summary.valid}</span>
+                <span className="rounded-lg bg-rose-500/15 px-3 py-1.5 font-semibold text-rose-300 ring-1 ring-rose-400/30" data-testid="preview-invalid">Hatalı: {preview.summary.invalid}</span>
+              </div>
+              <div className="overflow-hidden rounded-xl border border-white/10">
+                <table className="w-full text-left text-sm" data-testid="students-preview-table">
+                  <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
+                    <tr>
+                      <th className="px-3 py-2.5 font-semibold">Öğrenci No</th>
+                      <th className="px-3 py-2.5 font-semibold">Ad</th>
+                      <th className="px-3 py-2.5 font-semibold">Soyad</th>
+                      <th className="px-3 py-2.5 font-semibold">Sınıf</th>
+                      <th className="px-3 py-2.5 font-semibold">Şube</th>
+                      <th className="px-3 py-2.5 font-semibold">Durum</th>
+                      <th className="px-3 py-2.5 font-semibold">Hata Açıklaması</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {preview.rows.length === 0 ? (
+                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500">Dosyada satır bulunamadı.</td></tr>
+                    ) : (
+                      preview.rows.map((r, i) => (
+                        <tr key={i} className="text-slate-300" data-testid={`preview-row-${i}`}>
+                          <td className="px-3 py-2 font-semibold text-white">{r.student_number}</td>
+                          <td className="px-3 py-2">{r.first_name}</td>
+                          <td className="px-3 py-2">{r.last_name}</td>
+                          <td className="px-3 py-2">{r.level}</td>
+                          <td className="px-3 py-2">{r.branch}</td>
+                          <td className="px-3 py-2">
+                            {r.status === "Hazır" ? (
+                              <span className="rounded-lg bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-400/30">Hazır</span>
+                            ) : (
+                              <span className="rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-semibold text-rose-300 ring-1 ring-rose-400/30">Hatalı</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-slate-400">{r.error}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* Search */}
         <form onSubmit={doSearch} className="mb-4 flex items-center gap-2" data-testid="students-search-form">
