@@ -161,7 +161,6 @@ CREATE TRIGGER student_risks_same_school
 -- "Diğer" note integrity trigger (this migration's own object only).
 -- Enforces, at the DB level (never trusting the frontend):
 --   requires_note = true  -> trimmed note must be non-empty
---   requires_note = false -> note must be NULL
 -- based on the referenced risk_categories.requires_note flag.
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.tg_student_risks_note_integrity()
@@ -184,10 +183,6 @@ BEGIN
     IF v_requires_note THEN
         IF NEW.note IS NULL OR btrim(NEW.note) = '' THEN
             RAISE EXCEPTION 'note is required for this risk category';
-        END IF;
-    ELSE
-        IF NEW.note IS NOT NULL THEN
-            RAISE EXCEPTION 'note is not allowed for this risk category';
         END IF;
     END IF;
 
