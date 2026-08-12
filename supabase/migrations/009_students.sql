@@ -2,9 +2,8 @@
 -- Migration 009: Student pool data foundation (students +
 --                student_class_enrollments)
 -- Scope (STRICT): create public.students + public.student_class_enrollments
---                 + their updated_at triggers + RLS enable, plus the
---                 minimal UNIQUE constraints needed for a composite FK
---                 that guarantees same-school enrollment (see below).
+--                 + their updated_at triggers + a same-school integrity
+--                 trigger on student_class_enrollments + RLS enable ONLY.
 --
 -- Purpose: students are a permanent, shared pool reused across Risk Map,
 -- Student Recognition Form, Problem Screening Inventory and other guidance
@@ -12,19 +11,18 @@
 -- represented per academic year via student_class_enrollments so history
 -- is preserved and old forms keep their correct year/class context.
 --
--- CROSS-SCHOOL INTEGRITY: an enrollment's school_class must belong to the
--- SAME school as the student. Enforced purely at the DB level (no trigger,
--- no subquery) via composite foreign keys keyed on (…, school_id).
+-- CROSS-SCHOOL INTEGRITY: an enrollment's class must belong to the SAME
+-- school as the student. Enforced at the DB level using ONLY new objects
+-- created by THIS migration: a table-specific BEFORE INSERT OR UPDATE
+-- trigger on student_class_enrollments. No changes are made to
+-- school_classes (no ALTER / no new constraint / no new index) or to any
+-- other Migration 001-008 object.
 --
 -- Does NOT: create students/enrollments seed data, test students, any UI,
 --           any endpoint, Excel import, grade-promotion logic, risk/form
 --           tables, reporting, RLS policies, or return-to-school flow.
---           Does NOT edit Migration 001-008 files or alter their columns,
---           triggers, RLS, or data; the only touch to an existing table is
---           one ADDITIVE UNIQUE constraint on school_classes(id, school_id)
---           (id is already PK, so this adds no real restriction) required
---           as the target of the composite FK. Auth users and existing
---           school/admin login flows are untouched.
+--           Does NOT edit or alter Migration 001-008 files/objects/data.
+--           Auth users and existing school/admin login flows are untouched.
 -- No secret / service_role values are stored here.
 -- Result for both new tables: RLS = ON, policy count = 0.
 -- =====================================================================
@@ -69,25 +67,8 @@ CREATE TABLE public.students (
     -- Same student number cannot repeat within one school; different
     -- schools may freely reuse the same number.
     CONSTRAINT uq_students_school_student_number
-        UNIQUE (school_id, student_number),
-
-    -- Composite-FK target: lets enrollments reference (student, school)
-    -- together so the student's school is carried into the FK check.
-    -- id is already the PK, so this UNIQUE adds no real restriction.
-    CONSTRAINT uq_students_id_school
-        UNIQUE (id, school_id)
+        UNIQUE (school_id, student_number)
 );
-
--- ---------------------------------------------------------------------
--- Additive composite-FK target on the existing school_classes table.
--- id is already the PRIMARY KEY, so (id, school_id) is trivially unique
--- and this adds NO new restriction on existing rows/structure. It only
--- exists so student_class_enrollments can reference (school_class, school)
--- together and thereby force the class to share the student's school.
--- ---------------------------------------------------------------------
-ALTER TABLE public.school_classes
-    ADD CONSTRAINT uq_school_classes_id_school
-        UNIQUE (id, school_id);
 
 -- ---------------------------------------------------------------------
 -- TABLE: student_class_enrollments
@@ -97,15 +78,19 @@ ALTER TABLE public.school_classes
 --   2027-2028 -> 8/A
 -- as two separate rows. No class-history / movement table is created here.
 --
--- school_id is carried on the row solely to drive the composite FKs that
--- guarantee the student and the class belong to the SAME school.
+-- school_id is stored on the row for integrity (checked by the trigger
+-- below to equal both the student's and the class's school).
 -- ---------------------------------------------------------------------
 CREATE TABLE public.student_class_enrollments (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
-    student_id       UUID NOT NULL,
+    student_id       UUID NOT NULL
+                     REFERENCES public.students(id) ON DELETE RESTRICT,
+
     school_id        UUID NOT NULL,
-    school_class_id  UUID NOT NULL,
+
+    school_class_id  UUID NOT NULL
+                     REFERENCES public.school_classes(id) ON DELETE RESTRICT,
 
     academic_year_id UUID NOT NULL
                      REFERENCES public.academic_years(id) ON DELETE RESTRICT,
@@ -118,23 +103,61 @@ CREATE TABLE public.student_class_enrollments (
     -- Branch/class change within the same year is done later at the
     -- application layer by updating this existing row (controlled).
     CONSTRAINT uq_student_enrollment_student_year
-        UNIQUE (student_id, academic_year_id),
-
-    -- Composite FK #1: the student exists AND its school_id matches this
-    -- row's school_id.
-    CONSTRAINT fk_enrollment_student_school
-        FOREIGN KEY (student_id, school_id)
-        REFERENCES public.students (id, school_id)
-        ON DELETE RESTRICT,
-
-    -- Composite FK #2: the class exists AND its school_id matches this
-    -- row's school_id. Together with FK #1 this makes cross-school
-    -- enrollments (student in School A, class in School B) impossible.
-    CONSTRAINT fk_enrollment_class_school
-        FOREIGN KEY (school_class_id, school_id)
-        REFERENCES public.school_classes (id, school_id)
-        ON DELETE RESTRICT
+        UNIQUE (student_id, academic_year_id)
 );
+
+-- ---------------------------------------------------------------------
+-- Same-school integrity trigger (this migration's own object only).
+-- Rejects any INSERT/UPDATE where the student's school, the class's
+-- school, and NEW.school_id are not all identical. Prevents cross-school
+-- enrollments (student in School A, class in School B).
+--
+-- SECURITY DEFINER + SET search_path='' so it reliably reads students /
+-- school_classes regardless of the caller's RLS context; STABLE lookups.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.tg_student_class_enrollments_same_school()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    v_student_school_id UUID;
+    v_class_school_id   UUID;
+BEGIN
+    SELECT s.school_id INTO v_student_school_id
+    FROM public.students s
+    WHERE s.id = NEW.student_id;
+
+    SELECT sc.school_id INTO v_class_school_id
+    FROM public.school_classes sc
+    WHERE sc.id = NEW.school_class_id;
+
+    IF v_student_school_id IS NULL THEN
+        RAISE EXCEPTION 'student % not found', NEW.student_id;
+    END IF;
+
+    IF v_class_school_id IS NULL THEN
+        RAISE EXCEPTION 'school_class % not found', NEW.school_class_id;
+    END IF;
+
+    IF NOT (v_student_school_id = v_class_school_id
+            AND v_student_school_id = NEW.school_id) THEN
+        RAISE EXCEPTION
+            'cross-school enrollment rejected: student.school_id=%, class.school_id=%, enrollment.school_id=%',
+            v_student_school_id, v_class_school_id, NEW.school_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS student_class_enrollments_same_school
+    ON public.student_class_enrollments;
+CREATE TRIGGER student_class_enrollments_same_school
+    BEFORE INSERT OR UPDATE ON public.student_class_enrollments
+    FOR EACH ROW
+    EXECUTE FUNCTION public.tg_student_class_enrollments_same_school();
 
 -- ---------------------------------------------------------------------
 -- updated_at auto-maintenance via BEFORE UPDATE triggers.
