@@ -53,6 +53,7 @@ export default function AdminSubmissionDetail() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState({});
+  const [domainSort, setDomainSort] = useState("prevalence"); // prevalence | order
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -127,9 +128,26 @@ export default function AdminSubmissionDetail() {
             </div>
 
             {/* Domains */}
-            <h3 className="mb-3 text-base font-bold text-white">Ana Risk Alanları</h3>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-base font-bold text-white">Ana Risk Alanları</h3>
+              <div className="inline-flex rounded-xl bg-white/[0.05] p-1 ring-1 ring-white/10">
+                <button
+                  onClick={() => setDomainSort("prevalence")}
+                  data-testid="detail-domain-sort-prevalence"
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${domainSort === "prevalence" ? "bg-indigo-500/20 text-indigo-300" : "text-slate-400 hover:text-white"}`}
+                >Yaygınlığa göre</button>
+                <button
+                  onClick={() => setDomainSort("order")}
+                  data-testid="detail-domain-sort-order"
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${domainSort === "order" ? "bg-indigo-500/20 text-indigo-300" : "text-slate-400 hover:text-white"}`}
+                >Alan sırasına göre</button>
+              </div>
+            </div>
             <div className="mb-8 space-y-2.5" data-testid="detail-domains">
-              {data.domains.map((d) => (
+              {[...data.domains].sort((a, b) => domainSort === "order"
+                ? a.sort_order - b.sort_order
+                : (b.student_count - a.student_count) || (a.sort_order - b.sort_order)
+              ).map((d) => (
                 <BarRow key={d.risk_domain_id} label={d.name} count={d.student_count} percentage={d.percentage} />
               ))}
             </div>
