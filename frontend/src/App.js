@@ -7,6 +7,7 @@ import AdminLogin from "./pages/AdminLogin";
 import AdminHome from "./pages/AdminHome";
 import SchoolAccounts from "./pages/SchoolAccounts";
 import AdminSchoolImport from "./pages/AdminSchoolImport";
+import AdminRiskMap from "./pages/AdminRiskMap";
 import SchoolLogin from "./pages/SchoolLogin";
 import SchoolChangePassword from "./pages/SchoolChangePassword";
 import SchoolHome from "./pages/SchoolHome";
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="/admin" element={<AdminHome />} />
         <Route path="/admin/school-accounts" element={<SchoolAccounts />} />
         <Route path="/admin/school-import" element={<AdminSchoolImport />} />
+        <Route path="/admin/risk-map" element={<AdminRiskMap />} />
         <Route path="/school/login" element={<SchoolLogin />} />
         <Route path="/school/change-password" element={<SchoolChangePassword />} />
         <Route path="/school" element={<SchoolHome />} />

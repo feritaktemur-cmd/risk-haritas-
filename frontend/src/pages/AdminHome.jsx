@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { ShieldCheck, Loader2, LogOut, Users, FileSpreadsheet } from "lucide-react";
+import { ShieldCheck, Loader2, LogOut, Users, FileSpreadsheet, BarChart3 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -111,6 +111,22 @@ export default function AdminHome() {
             <span>
               <span className="block text-sm font-bold text-white">Okul İçe Aktarma</span>
               <span className="block text-xs text-slate-400">Excel ile okul kayıtlarını ön izle ve içe aktar</span>
+            </span>
+          </button>
+        </div>
+
+        <div className="mt-4">
+          <button
+            onClick={() => navigate("/admin/risk-map")}
+            data-testid="nav-risk-map"
+            className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-4 text-left transition hover:border-rose-400/40 hover:bg-white/[0.06]"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-rose-500/15 text-rose-300">
+              <BarChart3 size={20} />
+            </span>
+            <span>
+              <span className="block text-sm font-bold text-white">RAM Risk Haritası</span>
+              <span className="block text-xs text-slate-400">Okulların RAM'a gönderdiği Risk Haritası sonuçlarını görüntüleyin.</span>
             </span>
           </button>
         </div>

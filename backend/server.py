@@ -2050,6 +2050,62 @@ async def school_risk_map_submit(request: Request):
     }
 
 
+@api.get("/admin/risk-map/submissions")
+async def admin_risk_map_submissions(request: Request, district_id: int = None, q: str = None, status: str = "all"):
+    """Read-only list of school Risk Map submissions (snapshots).
+
+    General Admin only. Reads FROZEN snapshot rows from school_submissions
+    (never live student data). No student identity is returned. Newest first.
+    """
+    _require_general_admin(request)
+    client = get_service_client()
+
+    sel = (
+        "id,version_no,status,total_students,completed_students,"
+        "not_entered_students,total_risk_marks,submitted_at,school_id,"
+        "school:schools(name,district_id,district:districts(name)),"
+        "academic_year:academic_years(name)"
+    )
+    rows = _fetch_all(
+        lambda a, b: client.table("school_submissions").select(sel).order("submitted_at", desc=True).range(a, b)
+    )
+
+    items = []
+    for r in rows:
+        school = r.get("school") or {}
+        district = (school.get("district") or {}).get("name")
+        s_district_id = school.get("district_id")
+        school_name = school.get("name")
+
+        if district_id is not None and s_district_id != district_id:
+            continue
+        if q and (not school_name or q.lower() not in school_name.lower()):
+            continue
+        if status != "all" and r.get("status") != status:
+            continue
+
+        total = r.get("total_students") or 0
+        completed = r.get("completed_students") or 0
+        rate = round((completed / total) * 100, 1) if total else 0
+
+        items.append({
+            "submission_id": r["id"],
+            "school_name": school_name,
+            "district": district,
+            "academic_year": (r.get("academic_year") or {}).get("name"),
+            "version_no": r["version_no"],
+            "status": r["status"],
+            "total_students": total,
+            "completed_students": completed,
+            "not_entered_students": r.get("not_entered_students") or 0,
+            "completion_rate": rate,
+            "total_risk_marks": r.get("total_risk_marks") or 0,
+            "submitted_at": r.get("submitted_at"),
+        })
+
+    return {"submissions": items}
+
+
 app.include_router(api)
 
 app.add_middleware(
