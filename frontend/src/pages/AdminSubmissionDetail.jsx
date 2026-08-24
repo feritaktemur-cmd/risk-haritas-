@@ -155,7 +155,7 @@ export default function AdminSubmissionDetail() {
 
             {/* Categories */}
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h3 className="text-base font-bold text-white">Risk Maddeleri</h3>
+              <h3 className="text-base font-bold text-white">36 Risk Maddesi Analizi</h3>
               <div className="inline-flex rounded-xl bg-white/[0.05] p-1 ring-1 ring-white/10">
                 <button
                   onClick={() => setCatSort("density")}
