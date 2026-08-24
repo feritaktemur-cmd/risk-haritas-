@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { School, Loader2, LogOut, MapPin, LayoutGrid, Users, ShieldAlert, BarChart3 } from "lucide-react";
+import { School, Loader2, LogOut, MapPin, LayoutGrid, Users, ShieldAlert, BarChart3, Building2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -142,6 +142,20 @@ export default function SchoolHome() {
             <span>
               <span className="block text-sm font-bold text-white">Sınıf Risk Haritası</span>
               <span className="block text-xs text-slate-400">Seçilen sınıfın toplu risk analizini görüntüleyin.</span>
+            </span>
+          </button>
+
+          <button
+            onClick={() => navigate("/school/risk-map/school")}
+            data-testid="nav-school-risk-map"
+            className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-4 text-left transition hover:border-emerald-400/40 hover:bg-white/[0.06]"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+              <Building2 size={20} />
+            </span>
+            <span>
+              <span className="block text-sm font-bold text-white">Okul Risk Haritası</span>
+              <span className="block text-xs text-slate-400">Okulun geneli için toplu risk profilini görüntüleyin.</span>
             </span>
           </button>
         </div>

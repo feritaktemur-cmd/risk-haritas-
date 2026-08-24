@@ -14,6 +14,7 @@ import SchoolClasses from "./pages/SchoolClasses";
 import SchoolStudents from "./pages/SchoolStudents";
 import RiskEntry from "./pages/RiskEntry";
 import ClassRiskMap from "./pages/ClassRiskMap";
+import SchoolRiskMap from "./pages/SchoolRiskMap";
 import "./App.css";
 
 function NavItem({ to, icon: Icon, label }) {
@@ -76,6 +77,7 @@ export default function App() {
         <Route path="/school/students" element={<SchoolStudents />} />
         <Route path="/school/risk-entry" element={<RiskEntry />} />
         <Route path="/school/risk-map" element={<ClassRiskMap />} />
+        <Route path="/school/risk-map/school" element={<SchoolRiskMap />} />
         <Route path="/" element={<Navigate to="/school/login" replace />} />
         <Route path="/status" element={<Shell><ConnectionStatus /></Shell>} />
       </Routes>
