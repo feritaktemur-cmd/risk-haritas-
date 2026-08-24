@@ -1397,6 +1397,122 @@ async def school_risk_save(request: Request):
     return {"saved": len(payloads), "message": "Risk bilgileri kaydedildi."}
 
 
+@api.get("/school/risk-map/class")
+async def school_risk_map_class(request: Request, school_class_id: str):
+    """Aggregate Risk Map analysis for one class (active year).
+
+    Denominator for per-item percentages is the number of COMPLETED
+    assessments in the class (not total students). Scoped by token->school_id.
+    Returns anonymous, class-level aggregates only (no student identities).
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi.")
+
+    cls = _validate_own_class(client, school_id, school_class_id)
+
+    # Active students enrolled in this class for the active year.
+    enr = (
+        client.table("student_class_enrollments")
+        .select("student_id")
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year["id"])
+        .eq("school_class_id", school_class_id)
+        .execute()
+        .data
+    )
+    enrolled_ids = [e["student_id"] for e in enr]
+    active_ids = []
+    if enrolled_ids:
+        rows = (
+            client.table("students")
+            .select("id")
+            .eq("school_id", school_id)
+            .in_("id", enrolled_ids)
+            .eq("status", "active")
+            .execute()
+            .data
+        )
+        active_ids = [r["id"] for r in rows]
+
+    total_students = len(active_ids)
+
+    # Completed assessments among these active students.
+    completed_ids = []
+    if active_ids:
+        assessed = (
+            client.table("student_risk_assessments")
+            .select("student_id")
+            .eq("school_id", school_id)
+            .eq("academic_year_id", year["id"])
+            .in_("student_id", active_ids)
+            .execute()
+            .data
+        )
+        completed_ids = [a["student_id"] for a in assessed]
+    completed_count = len(completed_ids)
+    not_entered = total_students - completed_count
+    completion_rate = round((completed_count / total_students) * 100, 1) if total_students else 0
+
+    # Risk marks only from completed-assessment students.
+    per_category_count = {}
+    total_marks = 0
+    if completed_ids:
+        risk_rows = (
+            client.table("student_risks")
+            .select("risk_category_id")
+            .eq("school_id", school_id)
+            .eq("academic_year_id", year["id"])
+            .in_("student_id", completed_ids)
+            .execute()
+            .data
+        )
+        total_marks = len(risk_rows)
+        for r in risk_rows:
+            rc = r["risk_category_id"]
+            per_category_count[rc] = per_category_count.get(rc, 0) + 1
+
+    # All 36 active categories (form integrity), from DB (never hard-coded).
+    categories = (
+        client.table("risk_categories")
+        .select("id,code,label,sort_order")
+        .eq("is_active", True)
+        .order("sort_order")
+        .execute()
+        .data
+    )
+    items = []
+    for c in categories:
+        cnt = per_category_count.get(c["id"], 0)
+        pct = round((cnt / completed_count) * 100, 1) if completed_count else 0
+        items.append({
+            "risk_category_id": c["id"],
+            "code": c["code"],
+            "label": c["label"],
+            "sort_order": c["sort_order"],
+            "student_count": cnt,
+            "percentage": pct,
+        })
+
+    ctx = _school_context(client, school_id)
+    return {
+        "school_name": ctx["school_name"],
+        "academic_year": year["name"],
+        "class_label": f"{cls['level']}/{cls['branch']}",
+        "summary": {
+            "total_students": total_students,
+            "completed": completed_count,
+            "not_entered": not_entered,
+            "completion_rate": completion_rate,
+            "total_marks": total_marks,
+        },
+        "categories": items,
+    }
+
+
 app.include_router(api)
 
 app.add_middleware(
