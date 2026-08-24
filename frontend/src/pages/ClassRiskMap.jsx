@@ -32,6 +32,7 @@ export default function ClassRiskMap() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [sortMode, setSortMode] = useState("density"); // density | form
+  const [domainSort, setDomainSort] = useState("prevalence"); // prevalence | order
 
   const bootstrap = useCallback(async () => {
     const h = await authHeader();
@@ -94,6 +95,17 @@ export default function ClassRiskMap() {
     return arr;
   };
 
+  const sortedDomains = () => {
+    if (!data || !data.domains) return [];
+    const arr = [...data.domains];
+    if (domainSort === "order") {
+      arr.sort((a, b) => a.sort_order - b.sort_order);
+    } else {
+      arr.sort((a, b) => (b.student_count - a.student_count) || (a.sort_order - b.sort_order));
+    }
+    return arr;
+  };
+
   if (!ready || !info) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#0b1120]" data-testid="riskmap-loading">
@@ -108,6 +120,8 @@ export default function ClassRiskMap() {
 
   const cats = sortedCategories();
   const maxCount = data ? Math.max(1, ...data.categories.map((c) => c.student_count)) : 1;
+  const domains = sortedDomains();
+  const maxDomainCount = data && data.domains ? Math.max(1, ...data.domains.map((d) => d.student_count)) : 1;
 
   return (
     <div className="min-h-screen bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(16,185,129,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(99,102,241,0.10),transparent)]">
@@ -168,6 +182,68 @@ export default function ClassRiskMap() {
               <StatCard icon={Circle} label="Girilmeyen" value={data.summary.not_entered} tone="text-slate-500" testid="stat-not-entered" />
               <StatCard icon={Percent} label="Tamamlanma Oranı" value={`%${data.summary.completion_rate}`} tone="text-indigo-400" testid="stat-rate" />
               <StatCard icon={ListChecks} label="Toplam Risk İşaretlemesi" value={data.summary.total_marks} tone="text-rose-400" testid="stat-marks" />
+            </div>
+
+            {/* Domains */}
+            <div className="mb-8" data-testid="riskmap-domains">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-white">Ana Risk Alanları</h2>
+                  <p className="mt-0.5 text-xs text-slate-400">Formu tamamlanan öğrenciler arasında, ilgili alanda en az bir risk göstergesi bulunan öğrenci oranı.</p>
+                </div>
+                <div className="inline-flex rounded-xl bg-white/[0.05] p-1 ring-1 ring-white/10">
+                  <button
+                    onClick={() => setDomainSort("prevalence")}
+                    data-testid="domain-sort-prevalence"
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${domainSort === "prevalence" ? "bg-indigo-500/20 text-indigo-300" : "text-slate-400 hover:text-white"}`}
+                  >Yaygınlığa göre</button>
+                  <button
+                    onClick={() => setDomainSort("order")}
+                    data-testid="domain-sort-order"
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${domainSort === "order" ? "bg-indigo-500/20 text-indigo-300" : "text-slate-400 hover:text-white"}`}
+                  >Alan sırasına göre</button>
+                </div>
+              </div>
+
+              <div className="mb-4 space-y-2.5" data-testid="riskmap-domain-bars">
+                {domains.map((d) => (
+                  <div key={d.risk_domain_id} className="rounded-xl border border-white/8 bg-white/[0.02] p-3" data-testid={`domain-bar-${d.code}`}>
+                    <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                      <span className="text-sm text-slate-200">{d.name}</span>
+                      <span className="shrink-0 text-xs font-semibold text-slate-300">{d.student_count} öğrenci — %{d.percentage}</span>
+                    </div>
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-rose-500 transition-all"
+                        style={{ width: `${Math.round((d.student_count / maxDomainCount) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-white/10">
+                <table className="w-full text-left text-sm" data-testid="riskmap-domain-table">
+                  <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Sıra</th>
+                      <th className="px-4 py-3 font-semibold">Ana Risk Alanı</th>
+                      <th className="px-4 py-3 font-semibold">Öğrenci Sayısı</th>
+                      <th className="px-4 py-3 font-semibold">Oran</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {domains.map((d, i) => (
+                      <tr key={d.risk_domain_id} className="text-slate-300" data-testid={`domain-row-${d.code}`}>
+                        <td className="px-4 py-2.5 text-slate-500">{i + 1}</td>
+                        <td className="px-4 py-2.5 text-slate-200">{d.name}</td>
+                        <td className="px-4 py-2.5 font-semibold text-white">{d.student_count}</td>
+                        <td className="px-4 py-2.5">%{d.percentage}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             {/* Sort toggle */}

@@ -1460,10 +1460,11 @@ async def school_risk_map_class(request: Request, school_class_id: str):
     # Risk marks only from completed-assessment students.
     per_category_count = {}
     total_marks = 0
+    risk_rows = []
     if completed_ids:
         risk_rows = (
             client.table("student_risks")
-            .select("risk_category_id")
+            .select("student_id,risk_category_id")
             .eq("school_id", school_id)
             .eq("academic_year_id", year["id"])
             .in_("student_id", completed_ids)
@@ -1510,7 +1511,55 @@ async def school_risk_map_class(request: Request, school_class_id: str):
             "total_marks": total_marks,
         },
         "categories": items,
+        "domains": _domain_prevalence(client, risk_rows, completed_count),
     }
+
+
+def _domain_prevalence(client, risk_rows, completed_count):
+    """Domain prevalence: distinct completed-assessment students who have at
+    least ONE risk in the domain / completed_assessment_count x 100.
+
+    A student with several risks in the same domain counts ONCE for that
+    domain (student-level, not mark-level). Domains + mappings come from the
+    DB (never hard-coded). All 8 active domains are returned (0 included).
+    """
+    domains = (
+        client.table("risk_domains")
+        .select("id,code,name,sort_order")
+        .eq("is_active", True)
+        .order("sort_order")
+        .execute()
+        .data
+    )
+    mapping_rows = (
+        client.table("risk_category_domains")
+        .select("risk_category_id,risk_domain_id")
+        .execute()
+        .data
+    )
+    domain_by_category = {m["risk_category_id"]: m["risk_domain_id"] for m in mapping_rows}
+
+    # Per student -> set of domains they have at least one risk in.
+    students_by_domain = {}
+    for r in risk_rows:
+        dom = domain_by_category.get(r["risk_category_id"])
+        if dom is None:
+            continue
+        students_by_domain.setdefault(dom, set()).add(r["student_id"])
+
+    result = []
+    for d in domains:
+        cnt = len(students_by_domain.get(d["id"], set()))
+        pct = round((cnt / completed_count) * 100, 1) if completed_count else 0
+        result.append({
+            "risk_domain_id": d["id"],
+            "code": d["code"],
+            "name": d["name"],
+            "sort_order": d["sort_order"],
+            "student_count": cnt,
+            "percentage": pct,
+        })
+    return result
 
 
 app.include_router(api)
