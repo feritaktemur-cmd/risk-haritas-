@@ -1868,13 +1868,9 @@ async def school_risk_map_submit(request: Request):
     completed_set = {a["student_id"] for a in assessed if a["student_id"] in active_set}
     completed_students = len(completed_set)
     not_entered_students = total_students - completed_students
-    if not_entered_students > 0:
-        raise HTTPException(status_code=400, detail={
-            "message": "Risk Haritası veri girişi tamamlanmamış öğrenciler bulunduğu için RAM'a gönderim yapılamaz.",
-            "total_students": total_students,
-            "completed_students": completed_students,
-            "not_entered_students": not_entered_students,
-        })
+    # NOTE: not_entered_students > 0 no longer blocks submission. Schools may
+    # submit with incomplete students (chronic absentees, long-term ill,
+    # unreachable, etc.). The real counts are still frozen into the snapshot.
 
     # --- Risk rows for completed students (school-wide) ---
     risk_rows = []

@@ -158,8 +158,26 @@ export default function SchoolRiskMap() {
       {confirmOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" data-testid="schoolmap-confirm-modal">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141b2d] p-6 shadow-2xl">
-            <h3 className="text-base font-bold text-white">Risk Haritası sonuçlarını RAM'a göndermek istediğinizden emin misiniz?</h3>
-            <p className="mt-2 text-sm text-slate-400">Gönderim, mevcut sonuçların yeni bir sürümünü oluşturur.</p>
+            {data.summary.not_entered > 0 ? (
+              <>
+                <h3 className="text-base font-bold text-white" data-testid="schoolmap-confirm-title">
+                  {data.summary.not_entered} öğrencinin Risk Haritası veri girişi tamamlanmamış. Bu haliyle RAM'a göndermek istediğinizden emin misiniz?
+                </h3>
+                <p className="mt-2 text-sm text-slate-400">Gönderim, mevcut sonuçların yeni bir sürümünü oluşturur.</p>
+                <div className="mt-3 flex items-start gap-2 rounded-xl bg-amber-500/10 p-3 text-sm text-amber-300/90 ring-1 ring-amber-400/20" data-testid="schoolmap-confirm-summary">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <span>Toplam: {data.summary.total_students} · Tamamlanan: {data.summary.completed} · Eksik: {data.summary.not_entered} · Tamamlanma: %{data.summary.completion_rate}</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-base font-bold text-white" data-testid="schoolmap-confirm-title">Risk Haritası sonuçlarını RAM'a göndermek istediğinizden emin misiniz?</h3>
+                <p className="mt-2 text-sm text-slate-400">Gönderim, mevcut sonuçların yeni bir sürümünü oluşturur.</p>
+                <div className="mt-3 text-sm text-slate-400" data-testid="schoolmap-confirm-summary">
+                  Toplam: {data.summary.total_students} · Tamamlanan: {data.summary.completed} · Tamamlanma: %{data.summary.completion_rate}
+                </div>
+              </>
+            )}
             <div className="mt-6 flex justify-end gap-3">
               <button
                 onClick={() => setConfirmOpen(false)}
@@ -174,7 +192,7 @@ export default function SchoolRiskMap() {
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
               >
                 {submitting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-                RAM'a Gönder
+                {data.summary.not_entered > 0 ? "Yine de RAM'a Gönder" : "RAM'a Gönder"}
               </button>
             </div>
           </div>
