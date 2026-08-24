@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { School, Loader2, ArrowLeft, AlertTriangle, ShieldAlert, Save, SkipForward, User } from "lucide-react";
+import { School, Loader2, ArrowLeft, AlertTriangle, ShieldAlert, Save, SkipForward, User, CheckCircle2, Circle } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -146,8 +146,13 @@ export default function RiskEntry() {
     try {
       const h = await authHeader();
       if (!h) { navigate("/school/login", { replace: true }); return false; }
-      await axios.post(`${API}/school/risk/save`, { student_id: current.id, risks: buildPayload() }, { headers: h });
+      const payload = buildPayload();
+      await axios.post(`${API}/school/risk/save`, { student_id: current.id, risks: payload }, { headers: h });
       ok = true;
+      // Update the list status in place (no page refresh).
+      const savedId = current.id;
+      const count = payload.length;
+      setStudents((prev) => prev.map((s) => (s.id === savedId ? { ...s, assessed: true, risk_count: count } : s)));
     } catch (err) {
       setError(err.response?.data?.detail || "Risk bilgileri kaydedilemedi.");
     }
@@ -244,7 +249,16 @@ export default function RiskEntry() {
                         data-testid={`risk-student-${s.id}`}
                         className={`w-full rounded-xl px-3 py-2.5 text-left text-sm transition ${current?.id === s.id ? "bg-emerald-500/15 text-white ring-1 ring-emerald-400/40" : "text-slate-300 hover:bg-white/[0.05]"}`}
                       >
-                        <span className="font-semibold text-white">{s.student_number}</span> · {s.first_name} {s.last_name}
+                        <div className="flex items-center justify-between gap-2">
+                          <span><span className="font-semibold text-white">{s.student_number}</span> · {s.first_name} {s.last_name}</span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-xs" data-testid={`risk-status-${s.id}`}>
+                          {s.assessed ? (
+                            <><CheckCircle2 size={13} className="text-emerald-400" /> <span className="text-emerald-300">Tamamlandı · {s.risk_count > 0 ? `${s.risk_count} risk` : "Risk yok"}</span></>
+                          ) : (
+                            <><Circle size={13} className="text-slate-500" /> <span className="text-slate-500">Girilmedi</span></>
+                          )}
+                        </div>
                       </button>
                     </li>
                   ))}

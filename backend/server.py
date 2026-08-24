@@ -6,6 +6,7 @@ implemented separately later.
 """
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -1169,6 +1170,35 @@ async def school_risk_students(request: Request, school_class_id: str):
             for s in rows
         ]
 
+        # Per-student assessment status for the active year.
+        assessed = (
+            client.table("student_risk_assessments")
+            .select("student_id")
+            .eq("school_id", school_id)
+            .eq("academic_year_id", year["id"])
+            .in_("student_id", student_ids)
+            .execute()
+            .data
+        )
+        assessed_ids = {a["student_id"] for a in assessed}
+
+        risk_rows = (
+            client.table("student_risks")
+            .select("student_id")
+            .eq("school_id", school_id)
+            .eq("academic_year_id", year["id"])
+            .in_("student_id", student_ids)
+            .execute()
+            .data
+        )
+        risk_count = {}
+        for r in risk_rows:
+            risk_count[r["student_id"]] = risk_count.get(r["student_id"], 0) + 1
+
+        for s in students:
+            s["assessed"] = s["id"] in assessed_ids
+            s["risk_count"] = risk_count.get(s["id"], 0)
+
     return {
         "class_label": f"{cls['level']}/{cls['branch']}",
         "school_class_id": school_class_id,
@@ -1333,6 +1363,36 @@ async def school_risk_save(request: Request):
     except Exception:  # noqa: BLE001
         logger.exception("risk save failed")
         raise HTTPException(status_code=500, detail="Risk bilgileri kaydedilemedi. Lütfen tekrar deneyin.")
+
+    # Mark the form as completed for this student/year (only after risks are
+    # written successfully). 0 risks is valid -> "Tamamlandı · Risk yok".
+    # Upsert by (student_id, academic_year_id): create if missing, else bump
+    # completed_at. No duplicate row is created.
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        existing = (
+            client.table("student_risk_assessments")
+            .select("id")
+            .eq("student_id", student_id)
+            .eq("academic_year_id", year["id"])
+            .limit(1)
+            .execute()
+            .data
+        )
+        if existing:
+            client.table("student_risk_assessments").update({
+                "completed_at": now_iso,
+            }).eq("id", existing[0]["id"]).eq("school_id", school_id).execute()
+        else:
+            client.table("student_risk_assessments").insert({
+                "student_id": student_id,
+                "school_id": school_id,
+                "academic_year_id": year["id"],
+                "completed_at": now_iso,
+            }).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("assessment upsert failed")
+        raise HTTPException(status_code=500, detail="Risk bilgileri kaydedildi ancak durum güncellenemedi. Lütfen tekrar deneyin.")
 
     return {"saved": len(payloads), "message": "Risk bilgileri kaydedildi."}
 
