@@ -166,11 +166,12 @@ export default function AdminRiskMap() {
                       <th className="px-4 py-3 font-semibold">Tamamlanma</th>
                       <th className="px-4 py-3 font-semibold">Risk İşaretleme</th>
                       <th className="px-4 py-3 font-semibold">Gönderim Tarihi</th>
+                      <th className="px-4 py-3 font-semibold">İşlem</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {filtered.length === 0 ? (
-                      <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-500">Filtreye uygun gönderim bulunamadı.</td></tr>
+                      <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-500">Filtreye uygun gönderim bulunamadı.</td></tr>
                     ) : (
                       filtered.map((s) => (
                         <tr key={s.submission_id} className="text-slate-300 hover:bg-white/[0.02]" data-testid={`adminrisk-row-${s.submission_id}`}>
@@ -189,6 +190,13 @@ export default function AdminRiskMap() {
                           <td className="px-4 py-2.5">%{s.completion_rate}</td>
                           <td className="px-4 py-2.5">{s.total_risk_marks}</td>
                           <td className="px-4 py-2.5 text-slate-400">{formatDate(s.submitted_at)}</td>
+                          <td className="px-4 py-2.5">
+                            <button
+                              onClick={() => navigate(`/admin/risk-map/submissions/${s.submission_id}`)}
+                              data-testid={`adminrisk-view-${s.submission_id}`}
+                              className="rounded-lg bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-300 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/25"
+                            >Görüntüle</button>
+                          </td>
                         </tr>
                       ))
                     )}

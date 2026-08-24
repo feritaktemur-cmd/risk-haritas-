@@ -2106,6 +2106,137 @@ async def admin_risk_map_submissions(request: Request, district_id: int = None, 
     return {"submissions": items}
 
 
+@api.get("/admin/risk-map/submissions/{submission_id}")
+async def admin_risk_map_submission_detail(request: Request, submission_id: str):
+    """Read-only detail of ONE submission snapshot (by submission_id only).
+
+    General Admin only. All numeric results come strictly from the snapshot
+    tables of THIS submission_id (never live student data, never "latest
+    version" logic). No student identity / free-text notes are returned.
+    """
+    _require_general_admin(request)
+    client = get_service_client()
+
+    subs = (
+        client.table("school_submissions")
+        .select(
+            "id,version_no,status,total_students,completed_students,"
+            "not_entered_students,total_risk_marks,submitted_at,"
+            "school:schools(name,district:districts(name)),"
+            "academic_year:academic_years(name)"
+        )
+        .eq("id", submission_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    sub = subs[0] if subs else None
+    if sub is None:
+        raise HTTPException(status_code=404, detail="Gönderim kaydı bulunamadı.")
+
+    total = sub.get("total_students") or 0
+    completed = sub.get("completed_students") or 0
+    rate = round((completed / total) * 100, 1) if total else 0
+
+    def pct(cnt, denom):
+        return round((cnt / denom) * 100, 1) if denom else 0
+
+    # Reference labels/order (names only — no numbers from here).
+    domains_ref = client.table("risk_domains").select("id,name,sort_order").eq("is_active", True).order("sort_order").execute().data
+    cats_ref = client.table("risk_categories").select("id,label,sort_order").eq("is_active", True).order("sort_order").execute().data
+    domain_meta = {d["id"]: d for d in domains_ref}
+    cat_meta = {c["id"]: c for c in cats_ref}
+
+    # School-level 8 domains (from snapshot).
+    dom_rows = client.table("submission_domain_totals").select("risk_domain_id,student_count").eq("submission_id", submission_id).execute().data
+    dom_count = {d["risk_domain_id"]: d["student_count"] for d in dom_rows}
+    domains = [
+        {"risk_domain_id": d["id"], "name": d["name"], "sort_order": d["sort_order"],
+         "student_count": dom_count.get(d["id"], 0), "percentage": pct(dom_count.get(d["id"], 0), completed)}
+        for d in domains_ref
+    ]
+
+    # School-level 36 categories (from snapshot).
+    cat_rows = client.table("submission_risk_totals").select("risk_category_id,student_count").eq("submission_id", submission_id).execute().data
+    cat_count = {c["risk_category_id"]: c["student_count"] for c in cat_rows}
+    categories = [
+        {"risk_category_id": c["id"], "label": c["label"], "sort_order": c["sort_order"],
+         "student_count": cat_count.get(c["id"], 0), "percentage": pct(cat_count.get(c["id"], 0), completed)}
+        for c in cats_ref
+    ]
+
+    # Class summaries (from snapshot) + their per-class domain/category detail.
+    class_rows = (
+        client.table("submission_class_totals")
+        .select("id,class_name,grade_level,branch,total_students,completed_students,not_entered_students,total_risk_marks")
+        .eq("submission_id", submission_id)
+        .order("grade_level")
+        .order("branch")
+        .execute()
+        .data
+    )
+    class_ids = [c["id"] for c in class_rows]
+
+    class_dom_rows = []
+    class_cat_rows = []
+    if class_ids:
+        class_dom_rows = client.table("submission_class_domain_totals").select("submission_class_total_id,risk_domain_id,student_count").in_("submission_class_total_id", class_ids).execute().data
+        class_cat_rows = client.table("submission_class_risk_totals").select("submission_class_total_id,risk_category_id,student_count").in_("submission_class_total_id", class_ids).execute().data
+
+    dom_by_class = {}
+    for r in class_dom_rows:
+        dom_by_class.setdefault(r["submission_class_total_id"], {})[r["risk_domain_id"]] = r["student_count"]
+    cat_by_class = {}
+    for r in class_cat_rows:
+        cat_by_class.setdefault(r["submission_class_total_id"], {})[r["risk_category_id"]] = r["student_count"]
+
+    classes = []
+    for c in class_rows:
+        c_completed = c.get("completed_students") or 0
+        c_total = c.get("total_students") or 0
+        c_dom = dom_by_class.get(c["id"], {})
+        c_cat = cat_by_class.get(c["id"], {})
+        classes.append({
+            "class_name": c["class_name"],
+            "grade_level": c["grade_level"],
+            "branch": c["branch"],
+            "total_students": c_total,
+            "completed_students": c_completed,
+            "not_entered_students": c.get("not_entered_students") or 0,
+            "completion_rate": pct(c_completed, c_total),
+            "total_risk_marks": c.get("total_risk_marks") or 0,
+            "domains": [
+                {"name": d["name"], "student_count": c_dom.get(d["id"], 0), "percentage": pct(c_dom.get(d["id"], 0), c_completed)}
+                for d in domains_ref
+            ],
+            "categories": [
+                {"label": ct["label"], "student_count": c_cat.get(ct["id"], 0), "percentage": pct(c_cat.get(ct["id"], 0), c_completed)}
+                for ct in cats_ref
+            ],
+        })
+
+    school = sub.get("school") or {}
+    return {
+        "submission_id": sub["id"],
+        "school_name": school.get("name"),
+        "district": (school.get("district") or {}).get("name"),
+        "academic_year": (sub.get("academic_year") or {}).get("name"),
+        "version_no": sub["version_no"],
+        "status": sub["status"],
+        "submitted_at": sub.get("submitted_at"),
+        "summary": {
+            "total_students": total,
+            "completed": completed,
+            "not_entered": sub.get("not_entered_students") or 0,
+            "completion_rate": rate,
+            "total_marks": sub.get("total_risk_marks") or 0,
+        },
+        "domains": domains,
+        "categories": categories,
+        "classes": classes,
+    }
+
+
 app.include_router(api)
 
 app.add_middleware(
