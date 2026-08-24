@@ -133,6 +133,27 @@ JOIN (
 JOIN public.risk_domains rd ON rd.code = m.domain_code;
 
 -- ---------------------------------------------------------------------
+-- In-transaction guards: fail the whole migration if the seed/mapping
+-- counts are not exactly as expected (8 domains, 36 category mappings).
+-- ---------------------------------------------------------------------
+DO $$
+DECLARE
+    v_domains  INTEGER;
+    v_mappings INTEGER;
+BEGIN
+    SELECT count(*) INTO v_domains FROM public.risk_domains;
+    IF v_domains <> 8 THEN
+        RAISE EXCEPTION 'risk_domains seed count must be 8, got %', v_domains;
+    END IF;
+
+    SELECT count(*) INTO v_mappings FROM public.risk_category_domains;
+    IF v_mappings <> 36 THEN
+        RAISE EXCEPTION 'risk_category_domains mapping count must be 36, got %', v_mappings;
+    END IF;
+END;
+$$;
+
+-- ---------------------------------------------------------------------
 -- updated_at auto-maintenance for risk_domains (relation table needs none).
 -- Table-specific function/trigger names; existing Migration 006-011
 -- functions and triggers are left untouched.
