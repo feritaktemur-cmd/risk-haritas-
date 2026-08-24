@@ -1812,6 +1812,248 @@ async def school_risk_map_classes_comparison(request: Request):
     }
 
 
+@api.post("/school/risk-map/submit")
+async def school_risk_map_submit(request: Request):
+    """Freeze the school's aggregated Risk Map results as an immutable,
+    versioned submission to RAM. NO student identity is written to any
+    snapshot table — only aggregated counts. school_id/year/version resolved
+    server-side. All-or-nothing: on any failure the just-created submission
+    row is deleted (children cascade), never touching previous submissions.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi.")
+    year_id = year["id"]
+
+    # --- Active students enrolled in the school for the active year ---
+    enr = (
+        client.table("student_class_enrollments")
+        .select("student_id,school_class_id")
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year_id)
+        .execute()
+        .data
+    )
+    enrolled_ids = list({e["student_id"] for e in enr})
+    active_set = set()
+    if enrolled_ids:
+        rows = (
+            client.table("students")
+            .select("id")
+            .eq("school_id", school_id)
+            .in_("id", enrolled_ids)
+            .eq("status", "active")
+            .execute()
+            .data
+        )
+        active_set = {r["id"] for r in rows}
+    total_students = len(active_set)
+
+    if total_students == 0:
+        raise HTTPException(status_code=400, detail="Aktif eğitim yılında gönderilecek öğrenci bulunmuyor.")
+
+    # --- Completion check ---
+    assessed = (
+        client.table("student_risk_assessments")
+        .select("student_id")
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year_id)
+        .in_("student_id", list(active_set))
+        .execute()
+        .data
+    )
+    completed_set = {a["student_id"] for a in assessed if a["student_id"] in active_set}
+    completed_students = len(completed_set)
+    not_entered_students = total_students - completed_students
+    if not_entered_students > 0:
+        raise HTTPException(status_code=400, detail={
+            "message": "Risk Haritası veri girişi tamamlanmamış öğrenciler bulunduğu için RAM'a gönderim yapılamaz.",
+            "total_students": total_students,
+            "completed_students": completed_students,
+            "not_entered_students": not_entered_students,
+        })
+
+    # --- Risk rows for completed students (school-wide) ---
+    risk_rows = []
+    if completed_set:
+        risk_rows = (
+            client.table("student_risks")
+            .select("student_id,risk_category_id")
+            .eq("school_id", school_id)
+            .eq("academic_year_id", year_id)
+            .in_("student_id", list(completed_set))
+            .execute()
+            .data
+        )
+    total_risk_marks = len(risk_rows)
+
+    # --- Reference data: 36 categories, 8 domains, mapping ---
+    categories = (
+        client.table("risk_categories").select("id,sort_order").eq("is_active", True).order("sort_order").execute().data
+    )
+    domains = (
+        client.table("risk_domains").select("id,sort_order").eq("is_active", True).order("sort_order").execute().data
+    )
+    mapping_rows = client.table("risk_category_domains").select("risk_category_id,risk_domain_id").execute().data
+    domain_by_category = {m["risk_category_id"]: m["risk_domain_id"] for m in mapping_rows}
+
+    # --- School-wide per-category distinct student counts ---
+    cat_students = {}
+    student_domains = {}
+    for r in risk_rows:
+        cat_students.setdefault(r["risk_category_id"], set()).add(r["student_id"])
+        dom = domain_by_category.get(r["risk_category_id"])
+        if dom is not None:
+            student_domains.setdefault(r["student_id"], set()).add(dom)
+    domain_students = {}
+    for sid, doms in student_domains.items():
+        for d in doms:
+            domain_students.setdefault(d, set()).add(sid)
+
+    # --- Per-class breakdown ---
+    class_rows = (
+        client.table("school_classes")
+        .select("id,level,branch")
+        .eq("school_id", school_id)
+        .order("level")
+        .order("branch")
+        .execute()
+        .data
+    )
+    class_members = {}
+    for e in enr:
+        if e["student_id"] in active_set:
+            class_members.setdefault(e["school_class_id"], []).append(e["student_id"])
+    # Per-student marks/domain sets already available via risk_rows grouping.
+    marks_by_student = {}
+    domains_by_student = {}
+    cats_by_student = {}
+    for r in risk_rows:
+        sid = r["student_id"]
+        marks_by_student[sid] = marks_by_student.get(sid, 0) + 1
+        cats_by_student.setdefault(sid, set()).add(r["risk_category_id"])
+        dom = domain_by_category.get(r["risk_category_id"])
+        if dom is not None:
+            domains_by_student.setdefault(sid, set()).add(dom)
+
+    # ===================== WRITE (all-or-nothing) =====================
+    # Version number = current max + 1 for this school+year.
+    existing = (
+        client.table("school_submissions")
+        .select("version_no")
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year_id)
+        .order("version_no", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    version_no = (existing[0]["version_no"] + 1) if existing else 1
+
+    submission_id = None
+    try:
+        sub = client.table("school_submissions").insert({
+            "school_id": school_id,
+            "academic_year_id": year_id,
+            "version_no": version_no,
+            "status": "submitted",
+            "total_students": total_students,
+            "completed_students": completed_students,
+            "not_entered_students": not_entered_students,
+            "total_risk_marks": total_risk_marks,
+        }).execute().data
+        submission_id = sub[0]["id"]
+
+        # 36 category totals (all 36 rows, incl. 0).
+        cat_payload = [
+            {"submission_id": submission_id, "risk_category_id": c["id"], "student_count": len(cat_students.get(c["id"], set()))}
+            for c in categories
+        ]
+        if cat_payload:
+            client.table("submission_risk_totals").insert(cat_payload).execute()
+
+        # 8 domain totals (all 8 rows, incl. 0).
+        dom_payload = [
+            {"submission_id": submission_id, "risk_domain_id": d["id"], "student_count": len(domain_students.get(d["id"], set()))}
+            for d in domains
+        ]
+        if dom_payload:
+            client.table("submission_domain_totals").insert(dom_payload).execute()
+
+        # Per-class snapshots.
+        for c in class_rows:
+            members = class_members.get(c["id"], [])
+            completed_members = [s for s in members if s in completed_set]
+            c_total = len(members)
+            c_completed = len(completed_members)
+            c_not_entered = c_total - c_completed
+            c_marks = sum(marks_by_student.get(s, 0) for s in completed_members)
+
+            sct = client.table("submission_class_totals").insert({
+                "submission_id": submission_id,
+                "school_class_id": c["id"],
+                "class_name": f"{c['level']}/{c['branch']}",
+                "grade_level": c["level"],
+                "branch": c["branch"],
+                "total_students": c_total,
+                "completed_students": c_completed,
+                "not_entered_students": c_not_entered,
+                "total_risk_marks": c_marks,
+            }).execute().data
+            sct_id = sct[0]["id"]
+
+            class_cat_payload = [
+                {
+                    "submission_class_total_id": sct_id,
+                    "risk_category_id": cat["id"],
+                    "student_count": sum(1 for s in completed_members if cat["id"] in cats_by_student.get(s, set())),
+                }
+                for cat in categories
+            ]
+            if class_cat_payload:
+                client.table("submission_class_risk_totals").insert(class_cat_payload).execute()
+
+            class_dom_payload = [
+                {
+                    "submission_class_total_id": sct_id,
+                    "risk_domain_id": dom["id"],
+                    "student_count": sum(1 for s in completed_members if dom["id"] in domains_by_student.get(s, set())),
+                }
+                for dom in domains
+            ]
+            if class_dom_payload:
+                client.table("submission_class_domain_totals").insert(class_dom_payload).execute()
+
+    except Exception as e:  # noqa: BLE001
+        logger.exception("submission failed; cleaning up")
+        if submission_id:
+            try:
+                # Children cascade on delete of the parent submission row.
+                client.table("school_submissions").delete().eq("id", submission_id).eq("school_id", school_id).execute()
+            except Exception:  # noqa: BLE001
+                logger.exception("submission cleanup failed")
+        msg = str(e).lower()
+        if "uq_school_submissions_school_year_version" in msg or "duplicate" in msg or "unique" in msg:
+            raise HTTPException(status_code=409, detail="Gönderim sırasında bir çakışma oluştu. Lütfen tekrar deneyin.")
+        raise HTTPException(status_code=500, detail="Gönderim tamamlanamadı. Lütfen tekrar deneyin.")
+
+    sub_row = client.table("school_submissions").select("submitted_at,status").eq("id", submission_id).limit(1).execute().data
+    return {
+        "success": True,
+        "submission_id": submission_id,
+        "version_no": version_no,
+        "status": sub_row[0]["status"] if sub_row else "submitted",
+        "submitted_at": sub_row[0]["submitted_at"] if sub_row else None,
+        "total_students": total_students,
+        "completed_students": completed_students,
+        "total_risk_marks": total_risk_marks,
+        "message": "Risk Haritası RAM'a başarıyla gönderildi.",
+    }
+
+
 app.include_router(api)
 
 app.add_middleware(
