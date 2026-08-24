@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, Building2, Users, CheckCircle2, Circle, Percent, ListChecks } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, Building2, Users, CheckCircle2, Circle, Percent, ListChecks, Send } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -29,6 +29,10 @@ export default function SchoolRiskMap() {
   const [error, setError] = useState(null);
   const [domainSort, setDomainSort] = useState("prevalence"); // prevalence | order
   const [sortMode, setSortMode] = useState("density"); // density | form
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMsg, setSubmitMsg] = useState(null); // {type:'success'|'error', text}
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -78,6 +82,32 @@ export default function SchoolRiskMap() {
     return arr;
   };
 
+  const submit = async () => {
+    setSubmitting(true);
+    setSubmitMsg(null);
+    try {
+      const h = await authHeader();
+      if (!h) { navigate("/school/login", { replace: true }); return; }
+      const res = await axios.post(`${API}/school/risk-map/submit`, {}, { headers: h });
+      setConfirmOpen(false);
+      setSubmitMsg({ type: "success", text: `${res.data.message} Gönderim sürümü: ${res.data.version_no}` });
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      let text = "Gönderim sırasında bir hata oluştu. Lütfen tekrar deneyin.";
+      if (typeof detail === "string") {
+        text = detail;
+      } else if (detail && typeof detail === "object") {
+        text = detail.message || text;
+        if (detail.total_students != null) {
+          text += ` (Toplam: ${detail.total_students} · Tamamlanan: ${detail.completed_students} · Eksik: ${detail.not_entered_students})`;
+        }
+      }
+      setConfirmOpen(false);
+      setSubmitMsg({ type: "error", text });
+    }
+    setSubmitting(false);
+  };
+
   if (!ready || !data) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#0b1120]" data-testid="schoolmap-loading">
@@ -108,17 +138,64 @@ export default function SchoolRiskMap() {
               <h1 className="text-lg font-extrabold text-white" data-testid="schoolmap-title">Okul Risk Haritası</h1>
             </div>
           </div>
-          <button onClick={() => navigate("/school")} data-testid="schoolmap-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
-            <ArrowLeft size={15} /> Okul Paneli
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setSubmitMsg(null); setConfirmOpen(true); }}
+              disabled={submitting}
+              data-testid="schoolmap-submit-btn"
+              className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-emerald-500 to-indigo-500 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:opacity-50"
+            >
+              {submitting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+              {submitting ? "Gönderiliyor..." : "RAM'a Gönder"}
+            </button>
+            <button onClick={() => navigate("/school")} data-testid="schoolmap-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+              <ArrowLeft size={15} /> Okul Paneli
+            </button>
+          </div>
         </div>
       </header>
+
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" data-testid="schoolmap-confirm-modal">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141b2d] p-6 shadow-2xl">
+            <h3 className="text-base font-bold text-white">Risk Haritası sonuçlarını RAM'a göndermek istediğinizden emin misiniz?</h3>
+            <p className="mt-2 text-sm text-slate-400">Gönderim, mevcut sonuçların yeni bir sürümünü oluşturur.</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmOpen(false)}
+                disabled={submitting}
+                data-testid="schoolmap-confirm-cancel"
+                className="rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] disabled:opacity-50"
+              >Vazgeç</button>
+              <button
+                onClick={submit}
+                disabled={submitting}
+                data-testid="schoolmap-confirm-submit"
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {submitting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                RAM'a Gönder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="mx-auto max-w-6xl px-6 py-8">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-slate-400" data-testid="schoolmap-school-name">Okul: <span className="text-white">{data.school_name}</span></p>
           <span className="rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-300 ring-1 ring-indigo-400/30" data-testid="schoolmap-academic-year">Eğitim Yılı: {data.academic_year}</span>
         </div>
+
+        {submitMsg && (
+          <div
+            data-testid="schoolmap-submit-msg"
+            className={`mb-6 flex items-start gap-2 rounded-xl p-3 text-sm ring-1 ${submitMsg.type === "success" ? "bg-emerald-500/10 text-emerald-300 ring-emerald-400/20" : "bg-rose-500/10 text-rose-300 ring-rose-400/20"}`}
+          >
+            {submitMsg.type === "success" ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertTriangle size={16} className="mt-0.5 shrink-0" />}
+            <span>{submitMsg.text}</span>
+          </div>
+        )}
 
         {/* Summary cards */}
         <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
