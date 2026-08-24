@@ -108,9 +108,14 @@ export default function AdminRiskMap() {
               <h1 className="text-lg font-extrabold text-white" data-testid="adminrisk-title">RAM Risk Haritası</h1>
             </div>
           </div>
-          <button onClick={() => navigate("/admin")} data-testid="adminrisk-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
-            <ArrowLeft size={15} /> Yönetim Paneli
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => navigate("/admin/risk-map/aggregate")} data-testid="adminrisk-aggregate-btn" className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-indigo-500 to-rose-500 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:opacity-90">
+              <BarChart3 size={15} /> Birleşik Risk Haritası
+            </button>
+            <button onClick={() => navigate("/admin")} data-testid="adminrisk-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+              <ArrowLeft size={15} /> Yönetim Paneli
+            </button>
+          </div>
         </div>
       </header>
 

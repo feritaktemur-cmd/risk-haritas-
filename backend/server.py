@@ -2237,6 +2237,102 @@ async def admin_risk_map_submission_detail(request: Request, submission_id: str)
     }
 
 
+@api.get("/admin/academic-years")
+async def admin_academic_years(request: Request):
+    _require_general_admin(request)
+    client = get_service_client()
+    rows = client.table("academic_years").select("id,name,is_active").order("name", desc=True).execute().data
+    return {"academic_years": rows}
+
+
+@api.get("/admin/risk-map/aggregate")
+async def admin_risk_map_aggregate(request: Request, academic_year_id: str = None, district_id: int = None):
+    """Anonymous aggregated Risk Map across schools for ONE academic year.
+
+    General Admin only. Reads ONLY snapshot tables. For each school+year the
+    HIGHEST version_no submission is used (older versions excluded). Optional
+    district filter. Percentages use SUM(student_count)/SUM(completed_students).
+    No student identity is returned.
+    """
+    _require_general_admin(request)
+    client = get_service_client()
+
+    if not academic_year_id:
+        raise HTTPException(status_code=400, detail="Eğitim yılı seçilmedi.")
+
+    subs = _fetch_all(
+        lambda a, b: client.table("school_submissions")
+        .select("id,school_id,version_no,total_students,completed_students,not_entered_students,total_risk_marks,"
+                "school:schools(district_id)")
+        .eq("academic_year_id", academic_year_id)
+        .range(a, b)
+    )
+
+    # District filter + pick highest version_no per school.
+    latest = {}  # school_id -> submission row
+    for s in subs:
+        s_district = (s.get("school") or {}).get("district_id")
+        if district_id is not None and s_district != district_id:
+            continue
+        cur = latest.get(s["school_id"])
+        if cur is None or s["version_no"] > cur["version_no"]:
+            latest[s["school_id"]] = s
+
+    selected = list(latest.values())
+    selected_ids = [s["id"] for s in selected]
+
+    schools_count = len(selected)
+    total_students = sum(s.get("total_students") or 0 for s in selected)
+    completed = sum(s.get("completed_students") or 0 for s in selected)
+    not_entered = sum(s.get("not_entered_students") or 0 for s in selected)
+    total_marks = sum(s.get("total_risk_marks") or 0 for s in selected)
+    rate = round((completed / total_students) * 100, 1) if total_students else 0
+
+    def pct(cnt):
+        return round((cnt / completed) * 100, 1) if completed else 0
+
+    domains_ref = client.table("risk_domains").select("id,name,sort_order").eq("is_active", True).order("sort_order").execute().data
+    cats_ref = client.table("risk_categories").select("id,label,sort_order").eq("is_active", True).order("sort_order").execute().data
+
+    dom_sum = {}
+    cat_sum = {}
+    if selected_ids:
+        dom_rows = _fetch_all(
+            lambda a, b: client.table("submission_domain_totals").select("risk_domain_id,student_count").in_("submission_id", selected_ids).range(a, b)
+        )
+        for r in dom_rows:
+            dom_sum[r["risk_domain_id"]] = dom_sum.get(r["risk_domain_id"], 0) + (r["student_count"] or 0)
+        cat_rows = _fetch_all(
+            lambda a, b: client.table("submission_risk_totals").select("risk_category_id,student_count").in_("submission_id", selected_ids).range(a, b)
+        )
+        for r in cat_rows:
+            cat_sum[r["risk_category_id"]] = cat_sum.get(r["risk_category_id"], 0) + (r["student_count"] or 0)
+
+    domains = [
+        {"risk_domain_id": d["id"], "name": d["name"], "sort_order": d["sort_order"],
+         "student_count": dom_sum.get(d["id"], 0), "percentage": pct(dom_sum.get(d["id"], 0))}
+        for d in domains_ref
+    ]
+    categories = [
+        {"risk_category_id": c["id"], "label": c["label"], "sort_order": c["sort_order"],
+         "student_count": cat_sum.get(c["id"], 0), "percentage": pct(cat_sum.get(c["id"], 0))}
+        for c in cats_ref
+    ]
+
+    return {
+        "summary": {
+            "schools_count": schools_count,
+            "total_students": total_students,
+            "completed": completed,
+            "not_entered": not_entered,
+            "completion_rate": rate,
+            "total_marks": total_marks,
+        },
+        "domains": domains,
+        "categories": categories,
+    }
+
+
 app.include_router(api)
 
 app.add_middleware(
