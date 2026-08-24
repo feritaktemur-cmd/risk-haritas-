@@ -1672,6 +1672,146 @@ async def school_risk_map_school(request: Request):
     }
 
 
+@api.get("/school/risk-map/classes-comparison")
+async def school_risk_map_classes_comparison(request: Request):
+    """Per-class summaries + an 8-domain x classes prevalence matrix for the
+    active year. Each class is computed with its OWN completed-assessment
+    denominator (never averaged across classes, never raw counts). Anonymous
+    class-level aggregates only. Scoped by token->school_id.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi.")
+
+    classes = (
+        client.table("school_classes")
+        .select("id,level,branch")
+        .eq("school_id", school_id)
+        .order("level")
+        .order("branch")
+        .execute()
+        .data
+    )
+
+    enr = (
+        client.table("student_class_enrollments")
+        .select("student_id,school_class_id")
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year["id"])
+        .execute()
+        .data
+    )
+    all_enrolled_ids = list({e["student_id"] for e in enr})
+
+    active_set = set()
+    if all_enrolled_ids:
+        rows = (
+            client.table("students")
+            .select("id")
+            .eq("school_id", school_id)
+            .in_("id", all_enrolled_ids)
+            .eq("status", "active")
+            .execute()
+            .data
+        )
+        active_set = {r["id"] for r in rows}
+
+    # class_id -> list of active student ids
+    class_students = {}
+    for e in enr:
+        if e["student_id"] in active_set:
+            class_students.setdefault(e["school_class_id"], []).append(e["student_id"])
+
+    completed_set = set()
+    if active_set:
+        assessed = (
+            client.table("student_risk_assessments")
+            .select("student_id")
+            .eq("school_id", school_id)
+            .eq("academic_year_id", year["id"])
+            .in_("student_id", list(active_set))
+            .execute()
+            .data
+        )
+        completed_set = {a["student_id"] for a in assessed}
+
+    # Risk rows for completed students -> per-student mark count + domain set.
+    domains = (
+        client.table("risk_domains")
+        .select("id,code,name,sort_order")
+        .eq("is_active", True)
+        .order("sort_order")
+        .execute()
+        .data
+    )
+    mapping_rows = (
+        client.table("risk_category_domains")
+        .select("risk_category_id,risk_domain_id")
+        .execute()
+        .data
+    )
+    domain_by_category = {m["risk_category_id"]: m["risk_domain_id"] for m in mapping_rows}
+
+    marks_by_student = {}
+    domains_by_student = {}
+    if completed_set:
+        risk_rows = (
+            client.table("student_risks")
+            .select("student_id,risk_category_id")
+            .eq("school_id", school_id)
+            .eq("academic_year_id", year["id"])
+            .in_("student_id", list(completed_set))
+            .execute()
+            .data
+        )
+        for r in risk_rows:
+            sid = r["student_id"]
+            marks_by_student[sid] = marks_by_student.get(sid, 0) + 1
+            dom = domain_by_category.get(r["risk_category_id"])
+            if dom is not None:
+                domains_by_student.setdefault(sid, set()).add(dom)
+
+    class_items = []
+    for c in classes:
+        members = class_students.get(c["id"], [])
+        total = len(members)
+        completed_members = [s for s in members if s in completed_set]
+        completed = len(completed_members)
+        not_entered = total - completed
+        rate = round((completed / total) * 100, 1) if total else 0
+        total_marks = sum(marks_by_student.get(s, 0) for s in completed_members)
+
+        domain_cells = {}
+        for d in domains:
+            cnt = sum(1 for s in completed_members if d["id"] in domains_by_student.get(s, set()))
+            pct = round((cnt / completed) * 100, 1) if completed else 0
+            domain_cells[d["id"]] = {"student_count": cnt, "percentage": pct}
+
+        class_items.append({
+            "school_class_id": c["id"],
+            "level": c["level"],
+            "branch": c["branch"],
+            "class_label": f"{c['level']}/{c['branch']}",
+            "total_students": total,
+            "completed": completed,
+            "not_entered": not_entered,
+            "completion_rate": rate,
+            "total_marks": total_marks,
+            "domains": domain_cells,
+        })
+
+    return {
+        "domains": [
+            {"risk_domain_id": d["id"], "code": d["code"], "name": d["name"], "sort_order": d["sort_order"]}
+            for d in domains
+        ],
+        "classes": class_items,
+    }
+
+
 app.include_router(api)
 
 app.add_middleware(

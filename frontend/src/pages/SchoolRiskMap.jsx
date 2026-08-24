@@ -25,6 +25,7 @@ export default function SchoolRiskMap() {
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
   const [data, setData] = useState(null);
+  const [comparison, setComparison] = useState(null);
   const [error, setError] = useState(null);
   const [domainSort, setDomainSort] = useState("prevalence"); // prevalence | order
   const [sortMode, setSortMode] = useState("density"); // density | form
@@ -35,6 +36,10 @@ export default function SchoolRiskMap() {
     try {
       const res = await axios.get(`${API}/school/risk-map/school`, { headers: h });
       setData(res.data);
+      try {
+        const cmp = await axios.get(`${API}/school/risk-map/classes-comparison`, { headers: h });
+        setComparison(cmp.data);
+      } catch (_) { /* comparison is secondary; ignore its failure */ }
       return res.data;
     } catch (err) {
       const detail = err.response?.data?.detail;
@@ -226,6 +231,77 @@ export default function SchoolRiskMap() {
             </tbody>
           </table>
         </div>
+
+        {/* Classes comparison */}
+        {comparison && comparison.classes.length > 0 && (
+          <div className="mt-10" data-testid="schoolmap-comparison">
+            <h2 className="mb-1 text-base font-bold text-white">Sınıflar Arası Karşılaştırma</h2>
+            <p className="mb-4 text-xs text-slate-400">Her sınıf kendi tamamlanan öğrenci paydasıyla hesaplanır. Risk işaretleme sütunu yalnız bilgilendirme amaçlıdır.</p>
+
+            {/* Class summary table */}
+            <div className="mb-8 overflow-x-auto rounded-2xl border border-white/10">
+              <table className="w-full min-w-[640px] text-left text-sm" data-testid="comparison-summary-table">
+                <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Sınıf</th>
+                    <th className="px-4 py-3 font-semibold">Toplam Öğrenci</th>
+                    <th className="px-4 py-3 font-semibold">Tamamlanan</th>
+                    <th className="px-4 py-3 font-semibold">Girilmeyen</th>
+                    <th className="px-4 py-3 font-semibold">Tamamlanma Oranı</th>
+                    <th className="px-4 py-3 font-semibold">Risk İşaretleme</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {comparison.classes.map((c) => (
+                    <tr key={c.school_class_id} className="text-slate-300" data-testid={`comparison-summary-${c.class_label}`}>
+                      <td className="px-4 py-2.5 font-semibold text-white">{c.class_label}</td>
+                      <td className="px-4 py-2.5">{c.total_students}</td>
+                      <td className="px-4 py-2.5">{c.completed}</td>
+                      <td className="px-4 py-2.5">{c.not_entered}</td>
+                      <td className="px-4 py-2.5">%{c.completion_rate}</td>
+                      <td className="px-4 py-2.5">{c.total_marks}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Domains x classes matrix */}
+            <h3 className="mb-1 text-sm font-bold text-white">8 Ana Risk Alanı × Sınıflar</h3>
+            <p className="mb-3 text-xs text-slate-400">Hücreler, ilgili sınıfta formu tamamlanan öğrenciler arasında o alanda en az bir risk göstergesi bulunan öğrenci oranını gösterir.</p>
+            <div className="overflow-x-auto rounded-2xl border border-white/10">
+              <table className="w-full min-w-[640px] text-left text-sm" data-testid="comparison-matrix-table">
+                <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th className="sticky left-0 z-10 bg-[#141b2d] px-4 py-3 font-semibold">Ana Risk Alanı</th>
+                    {comparison.classes.map((c) => (
+                      <th key={c.school_class_id} className="px-4 py-3 text-center font-semibold">
+                        <div>{c.class_label}</div>
+                        <div className="mt-0.5 text-[10px] font-normal normal-case text-slate-500">%{c.completion_rate} tamamlandı</div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {comparison.domains.map((d) => (
+                    <tr key={d.risk_domain_id} className="text-slate-300" data-testid={`comparison-matrix-${d.code}`}>
+                      <td className="sticky left-0 z-10 bg-[#0f1626] px-4 py-2.5 text-slate-200">{d.name}</td>
+                      {comparison.classes.map((c) => {
+                        const cell = c.domains[d.risk_domain_id] || { student_count: 0, percentage: 0 };
+                        return (
+                          <td key={c.school_class_id} className="px-4 py-2.5 text-center">
+                            <span className="font-semibold text-white">{cell.student_count} öğrenci</span>
+                            <span className="text-slate-400"> · %{cell.percentage}</span>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
