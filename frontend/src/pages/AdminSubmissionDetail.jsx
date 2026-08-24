@@ -54,6 +54,7 @@ export default function AdminSubmissionDetail() {
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [domainSort, setDomainSort] = useState("prevalence"); // prevalence | order
+  const [catSort, setCatSort] = useState("density"); // density | form
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -153,9 +154,26 @@ export default function AdminSubmissionDetail() {
             </div>
 
             {/* Categories */}
-            <h3 className="mb-3 text-base font-bold text-white">Risk Maddeleri</h3>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-base font-bold text-white">Risk Maddeleri</h3>
+              <div className="inline-flex rounded-xl bg-white/[0.05] p-1 ring-1 ring-white/10">
+                <button
+                  onClick={() => setCatSort("density")}
+                  data-testid="detail-cat-sort-density"
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${catSort === "density" ? "bg-emerald-500/20 text-emerald-300" : "text-slate-400 hover:text-white"}`}
+                >Yoğunluğa göre</button>
+                <button
+                  onClick={() => setCatSort("form")}
+                  data-testid="detail-cat-sort-form"
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${catSort === "form" ? "bg-emerald-500/20 text-emerald-300" : "text-slate-400 hover:text-white"}`}
+                >Form sırasına göre</button>
+              </div>
+            </div>
             <div className="mb-8 space-y-2.5" data-testid="detail-categories">
-              {data.categories.map((c) => (
+              {[...data.categories].sort((a, b) => catSort === "form"
+                ? a.sort_order - b.sort_order
+                : (b.student_count - a.student_count) || (a.sort_order - b.sort_order)
+              ).map((c) => (
                 <BarRow key={c.risk_category_id} label={c.label} count={c.student_count} percentage={c.percentage} />
               ))}
             </div>
