@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, Building2, CheckCircle2, Circle, Percent, Download } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, Building2, CheckCircle2, Circle, Percent, Download, FileText } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -48,6 +48,7 @@ export default function AdminTracking() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const bootstrap = useCallback(async () => {
     const h = await authHeader();
@@ -163,6 +164,171 @@ export default function AdminTracking() {
     URL.revokeObjectURL(url);
   };
 
+  const nameOf = (arr, id, fallback) =>
+    (id ? (arr.find((x) => String(x.id) === String(id))?.name || fallback) : fallback);
+
+  const downloadPdf = async () => {
+    if (!schools.length || pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const jsPDF = (await import("jspdf")).default;
+      const autoTable = (await import("jspdf-autotable")).default;
+
+      // Load Turkish-capable TTF and register (both normal + bold -> same file).
+      const fontUrl = `${process.env.PUBLIC_URL || ""}/fonts/Roboto-Regular.ttf`;
+      const buf = await (await fetch(fontUrl)).arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      const fontB64 = btoa(binary);
+
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      doc.addFileToVFS("Roboto-Regular.ttf", fontB64);
+      doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+      doc.addFont("Roboto-Regular.ttf", "Roboto", "bold");
+      doc.setFont("Roboto", "normal");
+
+      const pageW = doc.internal.pageSize.getWidth();
+      const marginX = 40;
+      const yearName = years.find((y) => String(y.id) === String(yearId))?.name || "";
+      const statusLabel = { all: "Tümü", submitted: "Gönderdi", not_submitted: "Göndermedi" }[submissionState];
+      const generatedAt = new Date().toLocaleString("tr-TR", { dateStyle: "long", timeStyle: "short" });
+
+      // ---- Header block (once, top of first page) ----
+      let y = 42;
+      doc.setFont("Roboto", "bold");
+      doc.setFontSize(16);
+      doc.text("PDRPUSULA", marginX, y);
+      y += 20;
+      doc.setFontSize(13);
+      doc.text("RAM Gönderim Takip Raporu", marginX, y);
+      y += 18;
+      doc.setFont("Roboto", "normal");
+      doc.setFontSize(11);
+      doc.setTextColor(80);
+      doc.text(`${yearName} Eğitim Öğretim Yılı`, marginX, y);
+      doc.setTextColor(0);
+      y += 22;
+
+      // Rapor Kapsamı
+      doc.setFont("Roboto", "bold");
+      doc.setFontSize(10.5);
+      doc.text("Rapor Kapsamı", marginX, y);
+      y += 4;
+      doc.setDrawColor(210);
+      doc.line(marginX, y, pageW - marginX, y);
+      y += 14;
+      doc.setFont("Roboto", "normal");
+      doc.setFontSize(9.5);
+      const scope = [
+        ["İlçe", nameOf(districts, districtId, "Tüm İlçeler")],
+        ["Kademe", nameOf(educationLevels, educationLevelId, "Tüm Kademeler")],
+        ["Okul Türü", nameOf(schoolTypes, schoolTypeId, "Tüm Okul Türleri")],
+        ["Yönetim Türü", nameOf(managementTypes, managementTypeId, "Tüm Yönetim Türleri")],
+        ["Gönderim Durumu", statusLabel],
+      ];
+      const colW = (pageW - marginX * 2) / 2;
+      scope.forEach((row, i) => {
+        const cx = marginX + (i % 2) * colW;
+        const cy = y + Math.floor(i / 2) * 15;
+        doc.setTextColor(110);
+        doc.text(`${row[0]}:`, cx, cy);
+        doc.setTextColor(0);
+        doc.text(String(row[1]), cx + 90, cy);
+      });
+      y += Math.ceil(scope.length / 2) * 15 + 12;
+
+      // Özet göstergeler
+      const cards = [
+        ["Toplam Okul", String(summary?.total_schools ?? 0)],
+        ["Gönderen Okul", String(summary?.submitted_schools ?? 0)],
+        ["Göndermeyen Okul", String(summary?.not_submitted_schools ?? 0)],
+        ["Gönderim Oranı", `%${summary?.submission_rate ?? 0}`],
+      ];
+      const cardW = (pageW - marginX * 2 - 24) / 4;
+      const cardH = 40;
+      cards.forEach((c, i) => {
+        const cx = marginX + i * (cardW + 8);
+        doc.setDrawColor(220);
+        doc.setFillColor(245, 247, 250);
+        doc.roundedRect(cx, y, cardW, cardH, 4, 4, "FD");
+        doc.setFontSize(8);
+        doc.setTextColor(110);
+        doc.text(c[0], cx + 8, y + 15);
+        doc.setFont("Roboto", "bold");
+        doc.setFontSize(14);
+        doc.setTextColor(20);
+        doc.text(c[1], cx + 8, y + 33);
+        doc.setFont("Roboto", "normal");
+      });
+      doc.setTextColor(0);
+      const tableStartY = y + cardH + 18;
+
+      // ---- School table (multi-page, repeated header) ----
+      const body = schools.map((s, idx) => [
+        String(idx + 1),
+        s.district || "—",
+        s.school_name || "—",
+        s.education_level || "—",
+        s.school_type || "—",
+        s.management_type || "—",
+        s.submitted ? "Gönderdi" : "Göndermedi",
+        s.submitted ? `Sürüm ${s.version_no}` : "—",
+        s.submitted ? formatDate(s.submitted_at) : "—",
+        s.submitted ? `%${s.completion_rate}` : "—",
+      ]);
+
+      autoTable(doc, {
+        startY: tableStartY,
+        margin: { top: 40, left: marginX, right: marginX, bottom: 36 },
+        head: [["Sıra", "İlçe", "Okul", "Kademe", "Okul Türü", "Yönetim Türü", "Durum", "Son Sürüm", "Son Gönderim", "Tamamlanma"]],
+        body,
+        styles: { font: "Roboto", fontStyle: "normal", fontSize: 8, cellPadding: 3, overflow: "linebreak", valign: "middle", lineColor: [225, 225, 225], lineWidth: 0.5 },
+        headStyles: { font: "Roboto", fontStyle: "bold", fillColor: [37, 99, 235], textColor: 255, fontSize: 8 },
+        alternateRowStyles: { fillColor: [247, 249, 252] },
+        columnStyles: {
+          0: { cellWidth: 30, halign: "right" },
+          1: { cellWidth: 75 },
+          2: { cellWidth: "auto" },
+          3: { cellWidth: 70 },
+          4: { cellWidth: 95 },
+          5: { cellWidth: 70 },
+          6: { cellWidth: 62 },
+          7: { cellWidth: 55 },
+          8: { cellWidth: 95 },
+          9: { cellWidth: 62, halign: "right" },
+        },
+      });
+
+      // ---- Footer on every page: brand + generation date + page X / Y ----
+      const total = doc.getNumberOfPages();
+      const pageH = doc.internal.pageSize.getHeight();
+      for (let p = 1; p <= total; p++) {
+        doc.setPage(p);
+        doc.setFont("Roboto", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(130);
+        doc.text("PDRPUSULA – RAM Gönderim Takip Raporu", marginX, pageH - 18);
+        doc.text(`Rapor tarihi: ${generatedAt}`, pageW / 2, pageH - 18, { align: "center" });
+        doc.text(`Sayfa ${p} / ${total}`, pageW - marginX, pageH - 18, { align: "right" });
+      }
+      doc.setTextColor(0);
+
+      const base = submissionState === "not_submitted"
+        ? "ram-gondermeyen-okullar"
+        : submissionState === "submitted"
+        ? "ram-gonderen-okullar"
+        : "ram-gonderim-takibi";
+      doc.save(`${base}${yearLabel ? `-${yearLabel}` : ""}.pdf`);
+    } catch (_) {
+      setError("PDF raporu oluşturulamadı. Lütfen tekrar deneyin.");
+    }
+    setPdfBusy(false);
+  };
+
   return (
     <div className="min-h-screen bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(99,102,241,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(16,185,129,0.10),transparent)]">
       <header className="border-b border-white/10 bg-[#0b1120]/80 backdrop-blur">
@@ -178,7 +344,10 @@ export default function AdminTracking() {
           </div>
           <div className="flex items-center gap-2">
             <button onClick={downloadCsv} disabled={!schools.length} data-testid="tracking-csv-btn" className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40">
-              <Download size={15} /> Listeyi CSV İndir
+              <Download size={15} /> CSV İndir
+            </button>
+            <button onClick={downloadPdf} disabled={!schools.length || pdfBusy} data-testid="tracking-pdf-btn" className="inline-flex items-center gap-2 rounded-full bg-indigo-500/15 px-4 py-2 text-sm font-semibold text-indigo-300 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/25 disabled:cursor-not-allowed disabled:opacity-40">
+              {pdfBusy ? <Loader2 size={15} className="animate-spin" /> : <FileText size={15} />} PDF Raporu İndir
             </button>
             <button onClick={() => navigate("/admin/risk-map")} data-testid="tracking-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
               <ArrowLeft size={15} /> Okul Gönderimleri
