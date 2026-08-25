@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { ShieldCheck, Loader2, ArrowLeft, AlertTriangle, Search, BarChart3 } from "lucide-react";
+import { ShieldCheck, Loader2, ArrowLeft, AlertTriangle, Search, BarChart3, ClipboardList } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -109,6 +109,9 @@ export default function AdminRiskMap() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => navigate("/admin/risk-map/tracking")} data-testid="adminrisk-tracking-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+              <ClipboardList size={15} /> Gönderim Takibi
+            </button>
             <button onClick={() => navigate("/admin/risk-map/aggregate")} data-testid="adminrisk-aggregate-btn" className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-indigo-500 to-rose-500 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:opacity-90">
               <BarChart3 size={15} /> Birleşik Risk Haritası
             </button>

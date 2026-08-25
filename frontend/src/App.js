@@ -10,6 +10,7 @@ import AdminSchoolImport from "./pages/AdminSchoolImport";
 import AdminRiskMap from "./pages/AdminRiskMap";
 import AdminSubmissionDetail from "./pages/AdminSubmissionDetail";
 import AdminAggregateRiskMap from "./pages/AdminAggregateRiskMap";
+import AdminTracking from "./pages/AdminTracking";
 import SchoolLogin from "./pages/SchoolLogin";
 import SchoolChangePassword from "./pages/SchoolChangePassword";
 import SchoolHome from "./pages/SchoolHome";
@@ -75,6 +76,7 @@ export default function App() {
         <Route path="/admin/school-import" element={<AdminSchoolImport />} />
         <Route path="/admin/risk-map" element={<AdminRiskMap />} />
         <Route path="/admin/risk-map/aggregate" element={<AdminAggregateRiskMap />} />
+        <Route path="/admin/risk-map/tracking" element={<AdminTracking />} />
         <Route path="/admin/risk-map/submissions/:submissionId" element={<AdminSubmissionDetail />} />
         <Route path="/school/login" element={<SchoolLogin />} />
         <Route path="/school/change-password" element={<SchoolChangePassword />} />

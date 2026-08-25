@@ -2359,6 +2359,114 @@ async def admin_risk_map_aggregate(request: Request, academic_year_id: str = Non
     }
 
 
+@api.get("/admin/risk-map/tracking")
+async def admin_risk_map_tracking(request: Request, academic_year_id: str = None, district_id: int = None,
+                                  education_level_id: int = None, school_type_id: int = None,
+                                  management_type_id: int = None, submission_state: str = "all"):
+    """School-level RAM submission tracking for ONE academic year.
+
+    General Admin only. The school universe comes from `schools` (a school with
+    NO submission still appears). Submission status is derived ONLY from
+    `school_submissions` (existence => "submitted"; for the latest version_no).
+    Live student tables (students / student_risks / student_risk_assessments /
+    student_class_enrollments) are NEVER read. No student identity / individual
+    data is returned. `submission_state` (all/submitted/not_submitted) is a
+    TRACKING filter and is unrelated to school_submissions.status workflow.
+    """
+    _require_general_admin(request)
+    client = get_service_client()
+
+    if not academic_year_id:
+        raise HTTPException(status_code=400, detail="Eğitim yılı seçilmedi.")
+
+    # School universe with AND filters on school attributes.
+    sel = (
+        "id,name,district_id,education_level_id,school_type_id,management_type_id,"
+        "district:districts(name),education_level:education_levels(name),"
+        "school_type:school_types(name),management_type:management_types(name)"
+    )
+
+    def build_schools(a, b):
+        qb = client.table("schools").select(sel)
+        if district_id is not None:
+            qb = qb.eq("district_id", district_id)
+        if education_level_id is not None:
+            qb = qb.eq("education_level_id", education_level_id)
+        if school_type_id is not None:
+            qb = qb.eq("school_type_id", school_type_id)
+        if management_type_id is not None:
+            qb = qb.eq("management_type_id", management_type_id)
+        return qb.order("name").range(a, b)
+
+    schools = _fetch_all(build_schools)
+
+    # Submissions for this year -> latest (highest version_no) per school.
+    subs = _fetch_all(
+        lambda a, b: client.table("school_submissions")
+        .select("school_id,version_no,total_students,completed_students,submitted_at")
+        .eq("academic_year_id", academic_year_id)
+        .range(a, b)
+    )
+    latest = {}  # school_id -> latest submission row
+    for s in subs:
+        cur = latest.get(s["school_id"])
+        if cur is None or (s.get("version_no") or 0) > (cur.get("version_no") or 0):
+            latest[s["school_id"]] = s
+
+    items = []
+    submitted_count = 0
+    for sc in schools:
+        sub = latest.get(sc["id"])
+        is_submitted = sub is not None
+        if is_submitted:
+            submitted_count += 1
+        # tracking filter
+        if submission_state == "submitted" and not is_submitted:
+            continue
+        if submission_state == "not_submitted" and is_submitted:
+            continue
+
+        if is_submitted:
+            total = sub.get("total_students") or 0
+            completed = sub.get("completed_students") or 0
+            comp_rate = round((completed / total) * 100, 1) if total else 0
+            version_no = sub.get("version_no")
+            submitted_at = sub.get("submitted_at")
+        else:
+            comp_rate = None
+            version_no = None
+            submitted_at = None
+
+        items.append({
+            "school_id": sc["id"],
+            "school_name": sc["name"],
+            "district": (sc.get("district") or {}).get("name"),
+            "education_level": (sc.get("education_level") or {}).get("name"),
+            "school_type": (sc.get("school_type") or {}).get("name"),
+            "management_type": (sc.get("management_type") or {}).get("name"),
+            "submitted": is_submitted,
+            "version_no": version_no,
+            "submitted_at": submitted_at,
+            "completion_rate": comp_rate,
+        })
+
+    # Summary is computed over the FILTERED school universe (attribute filters),
+    # independent of the tracking submission_state filter.
+    total_schools = len(schools)
+    not_submitted_count = total_schools - submitted_count
+    rate = round((submitted_count / total_schools) * 100, 1) if total_schools else 0
+
+    return {
+        "summary": {
+            "total_schools": total_schools,
+            "submitted_schools": submitted_count,
+            "not_submitted_schools": not_submitted_count,
+            "submission_rate": rate,
+        },
+        "schools": items,
+    }
+
+
 app.include_router(api)
 
 app.add_middleware(

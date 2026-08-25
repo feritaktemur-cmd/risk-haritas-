@@ -39,6 +39,12 @@ olarak RAM'a gönderir; Genel Admin (RAM) gönderimleri ve birleşik analizi gö
 - /admin/risk-map/submissions/:id: Gönderim Detayı (snapshot; 8 alan + 36 madde toggle'lı, sınıf expand)
 - /admin/risk-map/aggregate: RAM Birleşik Risk Haritası — en güncel version/okul; filtreler:
   Eğitim Yılı + İlçe + Kademe + Okul Türü (kademeye göre daralan) + Yönetim Türü (AND)
+- /admin/risk-map/tracking: RAM Gönderim Takibi (Haziran 2026) — okul evreni `schools`,
+  submission durumu `school_submissions`'tan türetilir (hiç göndermeyen okul da listelenir).
+  Filtreler: Eğitim Yılı + İlçe + Kademe + Okul Türü (daralan) + Yönetim Türü + Gönderim Durumu
+  (all/submitted/not_submitted, takip filtresi — status workflow'dan bağımsız). Okul başına en
+  yüksek version_no seçilir. 4 kart: Toplam/Gönderen/Göndermeyen/Gönderim Oranı. Backend:
+  GET /api/admin/risk-map/tracking. Canlı öğrenci tabloları okunmaz, PII dönmez.
 
 ## Kritik matematik kuralları
 - Tamamlanma oranı paydası = toplam aktif öğrenci
