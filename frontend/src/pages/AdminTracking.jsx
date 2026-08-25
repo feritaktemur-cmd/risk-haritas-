@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, Building2, CheckCircle2, Circle, Percent } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, Building2, CheckCircle2, Circle, Percent, Download } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -125,6 +125,44 @@ export default function AdminTracking() {
   const summary = data?.summary;
   const schools = data?.schools || [];
 
+  const yearLabel = (years.find((y) => String(y.id) === String(yearId))?.name || "")
+    .replace(/[^0-9A-Za-zÇĞİÖŞÜçğıöşü]+/g, "-").replace(/^-+|-+$/g, "");
+
+  const downloadCsv = () => {
+    if (!schools.length) return;
+    const headers = ["İlçe", "Okul", "Kademe", "Okul Türü", "Yönetim Türü", "Gönderim Durumu", "Son Sürüm", "Son Gönderim", "Tamamlanma"];
+    const esc = (v) => `"${String(v ?? "—").replace(/"/g, '""')}"`;
+    const lines = [headers.map(esc).join(",")];
+    for (const s of schools) {
+      lines.push([
+        s.district || "—",
+        s.school_name || "—",
+        s.education_level || "—",
+        s.school_type || "—",
+        s.management_type || "—",
+        s.submitted ? "Gönderdi" : "Göndermedi",
+        s.submitted ? `Sürüm ${s.version_no}` : "—",
+        s.submitted ? formatDate(s.submitted_at) : "—",
+        s.submitted ? `%${s.completion_rate}` : "—",
+      ].map(esc).join(","));
+    }
+    const base = submissionState === "not_submitted"
+      ? "ram-gondermeyen-okullar"
+      : submissionState === "submitted"
+      ? "ram-gonderen-okullar"
+      : "ram-gonderim-takibi";
+    const fileName = `${base}${yearLabel ? `-${yearLabel}` : ""}.csv`;
+    const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(99,102,241,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(16,185,129,0.10),transparent)]">
       <header className="border-b border-white/10 bg-[#0b1120]/80 backdrop-blur">
@@ -138,9 +176,14 @@ export default function AdminTracking() {
               <h1 className="text-lg font-extrabold text-white" data-testid="tracking-title">RAM Gönderim Takibi</h1>
             </div>
           </div>
-          <button onClick={() => navigate("/admin/risk-map")} data-testid="tracking-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
-            <ArrowLeft size={15} /> Okul Gönderimleri
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={downloadCsv} disabled={!schools.length} data-testid="tracking-csv-btn" className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40">
+              <Download size={15} /> Listeyi CSV İndir
+            </button>
+            <button onClick={() => navigate("/admin/risk-map")} data-testid="tracking-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+              <ArrowLeft size={15} /> Okul Gönderimleri
+            </button>
+          </div>
         </div>
       </header>
 
