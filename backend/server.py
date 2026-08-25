@@ -2245,14 +2245,34 @@ async def admin_academic_years(request: Request):
     return {"academic_years": rows}
 
 
+@api.get("/admin/school-refs")
+async def admin_school_refs(request: Request):
+    """Reference lists for aggregate filters: education levels, school types
+    (with their education_level_id for level->type narrowing), management types."""
+    _require_general_admin(request)
+    client = get_service_client()
+    education_levels = client.table("education_levels").select("id,name,sort_order").order("sort_order").execute().data
+    school_types = client.table("school_types").select("id,name,education_level_id").order("name").execute().data
+    management_types = client.table("management_types").select("id,name").order("name").execute().data
+    return {
+        "education_levels": education_levels,
+        "school_types": school_types,
+        "management_types": management_types,
+    }
+
+
 @api.get("/admin/risk-map/aggregate")
-async def admin_risk_map_aggregate(request: Request, academic_year_id: str = None, district_id: int = None):
+async def admin_risk_map_aggregate(request: Request, academic_year_id: str = None, district_id: int = None,
+                                   education_level_id: int = None, school_type_id: int = None,
+                                   management_type_id: int = None):
     """Anonymous aggregated Risk Map across schools for ONE academic year.
 
     General Admin only. Reads ONLY snapshot tables. For each school+year the
     HIGHEST version_no submission is used (older versions excluded). Optional
-    district filter. Percentages use SUM(student_count)/SUM(completed_students).
-    No student identity is returned.
+    filters (district / education level / school type / management type) are
+    applied with AND on school attributes; they only change WHICH schools are
+    included — the snapshot math is unchanged. Percentages use
+    SUM(student_count)/SUM(completed_students). No student identity returned.
     """
     _require_general_admin(request)
     client = get_service_client()
@@ -2263,16 +2283,22 @@ async def admin_risk_map_aggregate(request: Request, academic_year_id: str = Non
     subs = _fetch_all(
         lambda a, b: client.table("school_submissions")
         .select("id,school_id,version_no,total_students,completed_students,not_entered_students,total_risk_marks,"
-                "school:schools(district_id)")
+                "school:schools(district_id,education_level_id,school_type_id,management_type_id)")
         .eq("academic_year_id", academic_year_id)
         .range(a, b)
     )
 
-    # District filter + pick highest version_no per school.
+    # AND filters on school attributes + pick highest version_no per school.
     latest = {}  # school_id -> submission row
     for s in subs:
-        s_district = (s.get("school") or {}).get("district_id")
-        if district_id is not None and s_district != district_id:
+        sc = s.get("school") or {}
+        if district_id is not None and sc.get("district_id") != district_id:
+            continue
+        if education_level_id is not None and sc.get("education_level_id") != education_level_id:
+            continue
+        if school_type_id is not None and sc.get("school_type_id") != school_type_id:
+            continue
+        if management_type_id is not None and sc.get("management_type_id") != management_type_id:
             continue
         cur = latest.get(s["school_id"])
         if cur is None or s["version_no"] > cur["version_no"]:

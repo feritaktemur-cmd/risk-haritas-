@@ -38,8 +38,14 @@ export default function AdminAggregateRiskMap() {
   const [ready, setReady] = useState(false);
   const [years, setYears] = useState([]);
   const [districts, setDistricts] = useState([]);
+  const [educationLevels, setEducationLevels] = useState([]);
+  const [schoolTypes, setSchoolTypes] = useState([]);
+  const [managementTypes, setManagementTypes] = useState([]);
   const [yearId, setYearId] = useState("");
   const [districtId, setDistrictId] = useState("");
+  const [educationLevelId, setEducationLevelId] = useState("");
+  const [schoolTypeId, setSchoolTypeId] = useState("");
+  const [managementTypeId, setManagementTypeId] = useState("");
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -51,13 +57,17 @@ export default function AdminAggregateRiskMap() {
     const h = await authHeader();
     if (!h) { navigate("/admin/login", { replace: true }); return; }
     try {
-      const [yRes, dRes] = await Promise.all([
+      const [yRes, dRes, rRes] = await Promise.all([
         axios.get(`${API}/admin/academic-years`, { headers: h }),
         axios.get(`${API}/admin/districts`, { headers: h }),
+        axios.get(`${API}/admin/school-refs`, { headers: h }),
       ]);
       const ys = yRes.data.academic_years || [];
       setYears(ys);
       setDistricts(dRes.data.districts || []);
+      setEducationLevels(rRes.data.education_levels || []);
+      setSchoolTypes(rRes.data.school_types || []);
+      setManagementTypes(rRes.data.management_types || []);
       const active = ys.find((y) => y.is_active) || ys[0];
       setYearId(active ? active.id : "");
     } catch (err) {
@@ -78,6 +88,9 @@ export default function AdminAggregateRiskMap() {
     try {
       const params = { academic_year_id: yearId };
       if (districtId) params.district_id = districtId;
+      if (educationLevelId) params.education_level_id = educationLevelId;
+      if (schoolTypeId) params.school_type_id = schoolTypeId;
+      if (managementTypeId) params.management_type_id = managementTypeId;
       const res = await axios.get(`${API}/admin/risk-map/aggregate`, { headers: h, params });
       setData(res.data);
     } catch (err) {
@@ -86,9 +99,25 @@ export default function AdminAggregateRiskMap() {
       setData(null);
     }
     setLoading(false);
-  }, [yearId, districtId, navigate]);
+  }, [yearId, districtId, educationLevelId, schoolTypeId, managementTypeId, navigate]);
 
-  useEffect(() => { if (yearId) loadAggregate(); }, [yearId, districtId, loadAggregate]);
+  useEffect(() => { if (yearId) loadAggregate(); }, [yearId, districtId, educationLevelId, schoolTypeId, managementTypeId, loadAggregate]);
+
+  // Level -> type narrowing: only show school types of the selected level.
+  const visibleSchoolTypes = educationLevelId
+    ? schoolTypes.filter((t) => String(t.education_level_id) === String(educationLevelId))
+    : schoolTypes;
+
+  const onLevelChange = (val) => {
+    setEducationLevelId(val);
+    // Clear an incompatible school type when the level changes.
+    if (schoolTypeId) {
+      const stillValid = schoolTypes.some(
+        (t) => String(t.id) === String(schoolTypeId) && (!val || String(t.education_level_id) === String(val))
+      );
+      if (!stillValid) setSchoolTypeId("");
+    }
+  };
 
   const sortedDomains = () => {
     if (!data) return [];
@@ -146,6 +175,27 @@ export default function AdminAggregateRiskMap() {
             <select value={districtId} onChange={(e) => setDistrictId(e.target.value)} data-testid="agg-district-filter" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60">
               <option value="">Tüm İlçeler</option>
               {districts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Kademe</label>
+            <select value={educationLevelId} onChange={(e) => onLevelChange(e.target.value)} data-testid="agg-level-filter" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60">
+              <option value="">Tüm Kademeler</option>
+              {educationLevels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Okul Türü</label>
+            <select value={schoolTypeId} onChange={(e) => setSchoolTypeId(e.target.value)} data-testid="agg-school-type-filter" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60">
+              <option value="">Tüm Okul Türleri</option>
+              {visibleSchoolTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Yönetim Türü</label>
+            <select value={managementTypeId} onChange={(e) => setManagementTypeId(e.target.value)} data-testid="agg-management-type-filter" className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60">
+              <option value="">Tüm Yönetim Türleri</option>
+              {managementTypes.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           </div>
         </div>
