@@ -1,73 +1,66 @@
-# School Risk Maps — PRD
+# PDRPUSULA Risk Haritası — PRD
 
-## Original Problem Statement
-Web application for creating and analyzing **School Risk Maps**, used by Guidance and Research Centers (RAM) and schools.
+## Problem / Amaç
+Türkiye RAM (Rehberlik ve Araştırma Merkezi) için okul bazlı Risk Haritası platformu.
+Okullar öğrencilerini yönetir, Risk Haritası verisi girer, sonuçları anonim snapshot
+olarak RAM'a gönderir; Genel Admin (RAM) gönderimleri ve birleşik analizi görür.
 
-Core requirements (static):
-- Secure login for RAM administrators and school users; one account per school.
-- Schools enter student risk data via class-based forms.
-- School Risk Maps generated automatically from class data.
-- RAM admins see ONLY aggregated statistics, never individual student data.
-- Analyze risk distributions by education level, school type, district, public/private.
-- Annual reporting + historical submissions.
-- Supabase for database, authentication, and storage.
-- Backend-first architecture for sensitive operations.
+## Mimari
+- Frontend: React (CRA), Tailwind, lucide-react. `REACT_APP_BACKEND_URL` kullanır.
+- Backend: FastAPI, tüm rotalar `/api` prefixli, port 8001 (supervisor).
+- Veritabanı/Auth: **Supabase** (PostgreSQL + Auth). Backend service_role client (RLS bypass).
+  MongoDB KULLANILMIYOR.
+- Güvenlik: backend-first. Okul: `_require_school_ready` (token→school_accounts→school_id).
+  Admin: `_require_general_admin` (admin_profiles role=general_admin).
 
-Constraint (current phase): Only configure the project and establish the Supabase connection.
-NO tables, NO migrations, NO schema changes — a custom schema/migration plan is applied later.
+## Migrations (Supabase SQL Editor'da MANUEL çalıştırılır — agent asla uygulamaz)
+- 001 referans tabloları (academic_years, education_levels, management_types, school_types)
+- 002–007 schools, school_accounts, admin_profiles vb.
+- 008 school_classes
+- 009 students + student_class_enrollments (same-school trigger)
+- 010 risk_categories (36 sabit RISK-001..036) + student_risks (+ note-integrity trigger; requires_note yalnız true'da zorunlu)
+- 011 student_risk_assessments (form tamamlandı işareti)
+- 012 risk_domains (8 alan DOMAIN-001..008) + risk_category_domains (36→8 eşleştirme, transaction-içi count guard)
+- 013 school_submissions + 5 snapshot tablosu (submission_risk/domain/class totals) — RAM'a gönderim/snapshot
 
-## Architecture
-- **Frontend**: React (CRA, react-scripts 5), Tailwind. `@supabase/supabase-js` v2.45.4 (pinned for Node 20). Client at `src/lib/supabaseClient.js` using publishable key.
-- **Backend**: FastAPI. `supabase-py` v2.31.0. Two clients in `supabase_client.py`: service client (secret key, bypasses RLS) + anon client (publishable key). All routes under `/api`.
-- **Supabase project**: https://jhirusgxqcmrkegrmxwi.supabase.co (new key format: sb_publishable_ / sb_secret_).
+## Tamamlanan Özellikler
+### Okul tarafı
+- Kök `/` → `/school/login` yönlendirmesi
+- Okul login + ilk girişte zorunlu şifre değiştirme
+- Sınıf Tanımları (/school/classes)
+- Öğrenciler (/school/students): tek ekleme, listeleme, arama, Excel ön izleme + toplu aktar (all-or-nothing)
+- Risk Haritası Veri Girişi (/school/risk-entry): sınıf→öğrenci→36 madde, "Diğer" note, kaydet + assessment upsert
+- Sınıf Risk Haritası v2 (/school/risk-map): 5 özet kart, 8 alan, 36 madde, sınıf içi sıralama
+- Okul Risk Haritası v2 (/school/risk-map/school): okul geneli + sınıflar arası karşılaştırma matrisi
+- RAM'a Gönder: eksik öğrenci varken de gönderilebilir (uyarılı onay modalı), version'lı snapshot
 
-## Implemented (2026-06 / 2026-08-07)
-- [DONE] Full-stack scaffold created from empty workspace.
-- [DONE] Supabase clients wired on backend (secret) + frontend (publishable).
-- [DONE] Connection verification endpoints: `GET /api/health`, `GET /api/supabase/status` (checks Auth admin + Storage buckets, no tables needed).
-- [DONE] Connection-status dashboard UI (Backend, Frontend, Auth, Storage cards). All verified GREEN/connected.
-- Corrected a typo in the provided Project URL (21→20 char ref) that caused DNS failure.
+### Genel Admin (RAM) tarafı
+- /admin/risk-map: Okul Gönderimleri listesi (ilçe/okul/durum filtresi, snapshot kaynaklı, Görüntüle)
+- /admin/risk-map/submissions/:id: Gönderim Detayı (snapshot; 8 alan + 36 madde toggle'lı, sınıf expand)
+- /admin/risk-map/aggregate: RAM Birleşik Risk Haritası — en güncel version/okul; filtreler:
+  Eğitim Yılı + İlçe + Kademe + Okul Türü (kademeye göre daralan) + Yönetim Türü (AND)
 
-## Backlog (next phases — require the custom schema first)
-- P0: RAM admin + school user auth (one account per school) — via Supabase Auth. MUST call integration_expert before implementing auth.
-- P0: Class-based student risk data entry forms (school side).
-- P1: Automatic School Risk Map generation from class data.
-- P1: RAM aggregated analytics (by education level, school type, district, public/private) — enforce no individual data exposure (backend-first + RLS).
-- P2: Annual reporting + historical submissions.
+## Kritik matematik kuralları
+- Tamamlanma oranı paydası = toplam aktif öğrenci
+- Risk maddesi / ana alan yüzdesi paydası = formu tamamlanan öğrenci (completed)
+- Ana alan sayımı distinct öğrenci (aynı öğrenci aynı alanda çok risk → 1)
+- Birleşik: SUM(student_count)/SUM(completed_students)×100 (okul yüzde ortalaması ASLA alınmaz)
+- Analiz yalnız snapshot tablolarından; canlı students/student_risks okunmaz
 
-## Notes
-- supabase-js pinned to 2.45.4; versions >=~2.11x require Node >=22 (env has Node 20).
+## Gizlilik
+Snapshot ve RAM ekranlarında öğrenci kimliği/no/ad/soyad/bireysel risk/serbest not YOK.
 
-## Excel Preview System (READ-ONLY, no import) — 2026-08-07
-- RAM Admin selects management type (Resmî/Özel) + Excel file, gets a PREVIEW only. NO DB writes.
-- Backend: `excel_preview.py` (pure `analyze_rows` + read-only `load_reference`) and `POST /api/schools/preview`.
-- Validates rows against `districts` and `school_types` (read-only). Reference tables already exist in Supabase (15 districts, 25 school_types) — migrations 001/002/005 were applied by the user.
-- Rules: Turkish-aware normalization (whitespace/case), MEB aliases (Anadolu Meslek Programı→Mesleki ve Teknik Anadolu Lisesi; Özel Eğitim Meslek Okulu (Zihinsel Engelliler)→Özel Eğitim Meslek Okulu), out-of-scope auto-flag (RAM, BİLSEM, İlçe MEM, Halk Eğitimi Merkezi).
-- Statuses: YÜKLENEBİLİR / KAPSAM DIŞI / HATALI İLÇE / HATALI OKUL TÜRÜ. Summary counts + table.
-- Frontend: `pages/SchoolImportPreview.jsx` (main route "/"), `pages/ConnectionStatus.jsx` ("/status"), router in `App.js`.
-- E2E verified via API + UI screenshot. Import/insert NOT built yet (next step, pending approval).
+## Çalışma kuralı (kullanıcı isteği)
+Tek küçük görev → dur → kullanıcı Preview'da manuel test → GitHub checkpoint → sonraki görev.
+testing_agent/otomatik test/curl/screenshot yalnız kullanıcı açıkça isterse. Migration'ları
+kullanıcı manuel çalıştırır; agent SQL dosyasını yalnız hazırlar.
 
-## Secure Import ("Okulları Aktar") — 2026-08-07
-- `POST /api/schools/import` (backend-only, service client). Inserts ONLY loadable rows into `schools`.
-- Refuses to start if any HATALI İLÇE / HATALI OKUL TÜRÜ (returns 400, no insert).
-- Field mapping: name→name, MERNIS→mernis_address_code (TEXT), district→district_id, MEB type→school_type (via alias/normalize)→school_type_id; education_level_id auto from matched school_type; management_type_id from management_types by name; is_active=true.
-- Duplicate protection (backend layer, NO new UNIQUE constraint): key = (normalized name, district_id, mernis_address_code). Existing or within-file dup → "ZATEN MEVCUT", skipped. MERNIS alone is NOT a dup criterion (same MERNIS + different school/district both insert).
-- Atomic single bulk INSERT (all-or-nothing); on failure → 500 with clear message, nothing written.
-- Result summary: Toplam / Eklenen / Zaten Mevcut / Kapsam Dışı / Hatalı / Atlanan; per-row statuses EKLENDİ / ZATEN MEVCUT / KAPSAM DIŞI / HATA.
-- Frontend: "{loadable} Okulu Aktar" button (enabled only when preview done & invalid_district=0 & invalid_school_type=0 & loadable>0). Frontend never does direct Supabase inserts; secret key stays backend-only.
-- Tested (all pass, test rows cleaned up): same MERNIS×2 both insert; re-upload → all ZATEN MEVCUT; out-of-scope never inserted; bad district → 400 no insert; education_level_id auto-mapped correctly.
-- NO users/auth, NO migrations, NO schema/RLS changes, reference tables untouched.
-- ✅ ACCEPTED by user 2026-08-07: 114 real schools imported to Supabase successfully in production. Module frozen (no further changes for now).
+## Durum
+Deployment readiness: deployment_agent PASS (Haziran 2026). Kod tabanı deploy'a hazır;
+env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 
-## Migration 006 — School Accounts base infra (APPLIED & CLOSED, 2026-08-07)
-- File: `supabase/migrations/006_school_accounts.sql`. Applied by user via Supabase SQL Editor.
-- Table `public.school_accounts` created: id(uuid pk), school_id(uuid uniq FK→schools.id ON DELETE RESTRICT), auth_user_id(uuid uniq FK→auth.users.id ON DELETE RESTRICT), username(text uniq), is_active(bool def true), must_change_password(bool def true), password_reset_at(timestamptz null), created_at/updated_at(timestamptz def now()). No password/hash stored.
-- Case-insensitive username uniqueness via unique index `ux_school_accounts_username_ci` on lower(username).
-- updated_at auto via trigger `set_updated_at` + `tg_school_accounts_set_updated_at()`.
-- RLS ENABLED, 0 policies (deferred). Helper `current_school_id()` (SECURITY DEFINER, search_path='', fully-qualified, STABLE; REVOKE PUBLIC/anon, GRANT EXECUTE authenticated; service_role intentionally not granted). Returns active account's school_id or NULL.
-- `is_ram_admin()` intentionally NOT created (no admin_profiles table yet) — deferred to a later migration.
-- FULLY VERIFIED (API + user SQL Editor read-only checks) and CLOSED.
-- NOTE: schools was 114 at verification time; a later separate data-entry effort changed the total, so 114 is no longer the current school count.
-
-## Current directive (2026-08-07)
-- HOLD: do NOT start Migration 007 or any new development. Preserve current state.
+## Backlog / Sonraki olası görevler
+- RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)
+- Submission status workflow (under_review / revision_requested / approved) UI+backend
+- Karşılaştırmalı analiz (kademe/okul türü/resmî-özel/ilçeler arası)
+- Güvenli Supabase key rotation (kullanıcı açıkça isterse)
