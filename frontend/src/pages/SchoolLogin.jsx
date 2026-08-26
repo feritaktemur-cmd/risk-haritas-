@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { School, Loader2, AlertTriangle } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { CorporateFooter } from "../components/CorporateFooter";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -91,6 +92,7 @@ export default function SchoolLogin() {
             Giriş Yap
           </button>
         </form>
+        <CorporateFooter className="mt-8" />
       </div>
     </div>
   );

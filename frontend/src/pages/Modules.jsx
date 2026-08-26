@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2, LogOut, MapPinned, BarChart3, GraduationCap, ArrowUpRight } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { CorporateFooter } from "../components/CorporateFooter";
 
 const LGS_URL = "https://pusulalgs.com.tr";
 
@@ -110,6 +111,8 @@ export default function Modules({ variant = "school" }) {
           </a>
         </div>
       </main>
+
+      <CorporateFooter className="border-t border-white/10" />
     </div>
   );
 }
