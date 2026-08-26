@@ -88,7 +88,7 @@ export default function SchoolHome() {
           </p>
         </div>
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <div className="mt-6 grid max-w-2xl gap-4">
           <button
             onClick={() => navigate("/school/classes")}
             data-testid="nav-classes"
