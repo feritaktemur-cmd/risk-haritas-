@@ -52,7 +52,7 @@ export default function SchoolChangePassword() {
       const h = await authHeader();
       if (!h) return navigate("/school/login", { replace: true });
       await axios.post(`${API}/school/change-password`, { new_password: pw1 }, { headers: h });
-      navigate("/school", { replace: true });
+      navigate("/school/modules", { replace: true });
     } catch (err) {
       setError(err.response?.data?.detail || "Şifre değiştirilemedi.");
     }

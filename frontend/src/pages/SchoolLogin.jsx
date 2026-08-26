@@ -30,7 +30,7 @@ export default function SchoolLogin() {
       if (data.must_change_password) {
         navigate("/school/change-password", { replace: true });
       } else {
-        navigate("/school", { replace: true });
+        navigate("/school/modules", { replace: true });
       }
     } catch (err) {
       setError(err.response?.data?.detail || "Kullanıcı adı veya şifre hatalı.");

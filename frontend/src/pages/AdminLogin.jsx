@@ -35,7 +35,7 @@ export default function AdminLogin() {
         await axios.get(`${API}/admin/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        navigate("/admin");
+        navigate("/admin/modules");
       } catch (authErr) {
         // Not authorized as active general_admin -> sign out and show generic msg.
         await supabase.auth.signOut();
