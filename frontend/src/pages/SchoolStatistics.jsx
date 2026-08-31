@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, BarChart3, Users, CheckCircle2, Circle, Percent, Info, ChevronDown } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, BarChart3, Users, CheckCircle2, Circle, Percent, Info, ChevronDown, FileDown } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -78,6 +78,8 @@ export default function SchoolStatistics() {
 
   const [peer, setPeer] = useState(null);
   const [howPeerOpen, setHowPeerOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState(null);
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -129,6 +131,289 @@ export default function SchoolStatistics() {
     loadClass(cid);
   };
 
+  const downloadPdf = async () => {
+    if (!data || pdfBusy) return;
+    setPdfBusy(true);
+    setPdfError(null);
+    try {
+      const jsPDF = (await import("jspdf")).default;
+      const autoTable = (await import("jspdf-autotable")).default;
+
+      // Turkish-capable TTF embed (same proven method as AdminTracking).
+      const fontUrl = `${process.env.PUBLIC_URL || ""}/fonts/Roboto-Regular.ttf`;
+      const buf = await (await fetch(fontUrl)).arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      const fontB64 = btoa(binary);
+
+      const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      doc.addFileToVFS("Roboto-Regular.ttf", fontB64);
+      doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+      doc.addFont("Roboto-Regular.ttf", "Roboto", "bold");
+      doc.setFont("Roboto", "normal");
+
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const marginX = 40;
+      const contentW = pageW - marginX * 2;
+      const yearName = data.academic_year || "";
+      const schoolName = data.school_name || "";
+      const generatedAt = new Date().toLocaleString("tr-TR", { dateStyle: "long", timeStyle: "short" });
+
+      // ---- Header (page 1) ----
+      let y = 46;
+      doc.setFont("Roboto", "bold");
+      doc.setFontSize(17);
+      doc.setTextColor(30, 41, 59);
+      doc.text("PDRPUSULA", marginX, y);
+      y += 20;
+      doc.setFontSize(13);
+      doc.setTextColor(20);
+      doc.text("Risk Haritası İstatistik Raporu", marginX, y);
+      y += 20;
+      doc.setFont("Roboto", "normal");
+      doc.setFontSize(11);
+      doc.setTextColor(70);
+      if (schoolName) { doc.text(schoolName, marginX, y); y += 15; }
+      doc.text(`${yearName} Eğitim Öğretim Yılı`, marginX, y);
+      doc.setTextColor(0);
+      y += 8;
+      doc.setDrawColor(37, 99, 235);
+      doc.setLineWidth(1.2);
+      doc.line(marginX, y, pageW - marginX, y);
+      doc.setLineWidth(0.5);
+      y += 20;
+
+      // ---- Cards helper ----
+      const drawCards = (startY, cards) => {
+        const gap = 8;
+        const cardW = (contentW - gap * 3) / 4;
+        const cardH = 42;
+        cards.forEach((c, i) => {
+          const cx = marginX + i * (cardW + gap);
+          doc.setDrawColor(220);
+          doc.setFillColor(245, 247, 250);
+          doc.roundedRect(cx, startY, cardW, cardH, 4, 4, "FD");
+          doc.setFont("Roboto", "normal");
+          doc.setFontSize(7.5);
+          doc.setTextColor(110);
+          doc.text(c[0], cx + 8, startY + 15);
+          doc.setFont("Roboto", "bold");
+          doc.setFontSize(15);
+          doc.setTextColor(20);
+          doc.text(String(c[1]), cx + 8, startY + 34);
+        });
+        doc.setTextColor(0);
+        return startY + cardH;
+      };
+
+      // ---- Section title with page-break guard ----
+      const sectionTitle = (startY, title) => {
+        let ny = startY;
+        if (ny + 60 > pageH - 45) { doc.addPage(); ny = 50; }
+        doc.setFont("Roboto", "bold");
+        doc.setFontSize(12.5);
+        doc.setTextColor(20);
+        doc.text(title, marginX, ny);
+        doc.setTextColor(0);
+        return ny + 8;
+      };
+
+      // ---- Single-metric bar table ----
+      const barTable = (startY, rows) => {
+        const body = rows.map((r, i) => [String(i + 1), r.name, String(r.count), `%${fmtPct(r.percentage)}`, r.percentage]);
+        autoTable(doc, {
+          startY: startY + 6,
+          margin: { left: marginX, right: marginX, bottom: 40 },
+          head: [["#", "Risk Alanı / Maddesi", "Öğrenci", "Oran", "Grafik"]],
+          body,
+          styles: { font: "Roboto", fontStyle: "normal", fontSize: 9, cellPadding: 3, overflow: "linebreak", valign: "middle", textColor: 40, lineColor: [225, 225, 225], lineWidth: 0.5 },
+          headStyles: { font: "Roboto", fontStyle: "bold", fillColor: [37, 99, 235], textColor: 255, fontSize: 9 },
+          alternateRowStyles: { fillColor: [247, 249, 252] },
+          columnStyles: {
+            0: { cellWidth: 22, halign: "right" },
+            1: { cellWidth: "auto" },
+            2: { cellWidth: 52, halign: "right" },
+            3: { cellWidth: 46, halign: "right" },
+            4: { cellWidth: 150 },
+          },
+          didParseCell: (d) => { if (d.column.index === 4) d.cell.text = [""]; },
+          didDrawCell: (d) => {
+            if (d.section === "body" && d.column.index === 4) {
+              const pctVal = d.row.raw[4] || 0;
+              const pad = 4;
+              const bx = d.cell.x + pad, bw = d.cell.width - pad * 2, bh = 6;
+              const by = d.cell.y + (d.cell.height - bh) / 2;
+              doc.setFillColor(230, 232, 236);
+              doc.roundedRect(bx, by, bw, bh, 2, 2, "F");
+              const fw = Math.max(0, Math.min(1, pctVal / 100)) * bw;
+              if (fw > 0) { doc.setFillColor(16, 185, 129); doc.roundedRect(bx, by, fw, bh, 2, 2, "F"); }
+            }
+          },
+        });
+        return doc.lastAutoTable.finalY;
+      };
+
+      // ---- Two-metric comparison bar table ----
+      const compareTable = (startY, rows) => {
+        const body = rows.map((r, i) => [String(i + 1), r.name, `%${fmtPct(r.mine)}`, `%${fmtPct(r.peer)}`, [r.mine, r.peer]]);
+        autoTable(doc, {
+          startY: startY + 6,
+          margin: { left: marginX, right: marginX, bottom: 40 },
+          head: [["#", "Ana Risk Alanı", "Okulum", "Diğer Okullar", "Grafik"]],
+          body,
+          styles: { font: "Roboto", fontStyle: "normal", fontSize: 9, cellPadding: 3, overflow: "linebreak", valign: "middle", textColor: 40, lineColor: [225, 225, 225], lineWidth: 0.5 },
+          headStyles: { font: "Roboto", fontStyle: "bold", fillColor: [37, 99, 235], textColor: 255, fontSize: 9 },
+          alternateRowStyles: { fillColor: [247, 249, 252] },
+          columnStyles: {
+            0: { cellWidth: 22, halign: "right" },
+            1: { cellWidth: "auto" },
+            2: { cellWidth: 55, halign: "right" },
+            3: { cellWidth: 78, halign: "right" },
+            4: { cellWidth: 150 },
+          },
+          didParseCell: (d) => { if (d.column.index === 4) d.cell.text = [""]; },
+          didDrawCell: (d) => {
+            if (d.section === "body" && d.column.index === 4) {
+              const [mine, peerVal] = d.row.raw[4] || [0, 0];
+              const pad = 4;
+              const bx = d.cell.x + pad, bw = d.cell.width - pad * 2, bh = 5;
+              const y1 = d.cell.y + d.cell.height / 2 - bh - 1;
+              const y2 = d.cell.y + d.cell.height / 2 + 1;
+              doc.setFillColor(230, 232, 236);
+              doc.roundedRect(bx, y1, bw, bh, 2, 2, "F");
+              doc.roundedRect(bx, y2, bw, bh, 2, 2, "F");
+              const fwMine = Math.max(0, Math.min(1, mine / 100)) * bw;
+              const fwPeer = Math.max(0, Math.min(1, peerVal / 100)) * bw;
+              if (fwMine > 0) { doc.setFillColor(16, 185, 129); doc.roundedRect(bx, y1, fwMine, bh, 2, 2, "F"); }
+              if (fwPeer > 0) { doc.setFillColor(79, 70, 229); doc.roundedRect(bx, y2, fwPeer, bh, 2, 2, "F"); }
+            }
+          },
+        });
+        return doc.lastAutoTable.finalY;
+      };
+
+      // ---- Genel Özet ----
+      y = drawCards(y, [
+        ["Toplam Öğrenci", data.summary.total_students],
+        ["Formu Tamamlanan", data.summary.completed],
+        ["Formu Tamamlanmayan", data.summary.not_entered],
+        ["Tamamlanma Oranı", `%${fmtPct(data.summary.completion_rate)}`],
+      ]);
+      y += 22;
+
+      // ---- 8 Ana Risk Alanı ----
+      const domainRows = [...(data.domains || [])]
+        .sort((a, b) => (b.percentage - a.percentage) || (a.sort_order - b.sort_order))
+        .map((d) => ({ name: d.name, count: d.student_count, percentage: d.percentage }));
+      y = sectionTitle(y, "8 Ana Risk Alanının Dağılımı");
+      y = barTable(y, domainRows);
+      y += 22;
+
+      // ---- 36 Risk Maddesi ----
+      const catRows = [...(data.categories || [])]
+        .sort((a, b) => (b.percentage - a.percentage) || (a.sort_order - b.sort_order))
+        .map((c) => ({ name: c.label, count: c.student_count, percentage: c.percentage }));
+      y = sectionTitle(y, "36 Risk Maddesinin Dağılımı");
+      y = barTable(y, catRows);
+      y += 22;
+
+      // ---- Seçili sınıf (yalnız classData varsa) ----
+      if (classData) {
+        y = sectionTitle(y, `Sınıf Bazlı Risk Maddeleri — ${classData.class_label}`);
+        y = drawCards(y + 4, [
+          ["Toplam Öğrenci", classData.summary.total_students],
+          ["Formu Tamamlanan", classData.summary.completed],
+          ["Formu Tamamlanmayan", classData.summary.not_entered],
+          ["Tamamlanma Oranı", `%${fmtPct(classData.summary.completion_rate)}`],
+        ]);
+        y += 14;
+        const classCatRows = [...(classData.categories || [])]
+          .sort((a, b) => (b.percentage - a.percentage) || (a.sort_order - b.sort_order))
+          .map((c) => ({ name: c.label, count: c.student_count, percentage: c.percentage }));
+        y = barTable(y, classCatRows);
+        y += 22;
+      }
+
+      // ---- Peer karşılaştırma ----
+      if (peer) {
+        y = sectionTitle(y, "Aynı Kademedeki Okullarla Karşılaştırma");
+        if (peer.eligible) {
+          doc.setFont("Roboto", "normal");
+          doc.setFontSize(9.5);
+          doc.setTextColor(70);
+          doc.text(`${peer.education_level} · ${peer.schools_count} diğer okul · ${(peer.total_completed || 0).toLocaleString("tr-TR")} tamamlanmış form`, marginX, y + 14);
+          doc.setTextColor(0);
+          y += 20;
+          const myPct = {};
+          (data.domains || []).forEach((d) => { myPct[d.risk_domain_id] = d.percentage; });
+          const peerRows = [...(peer.domains || [])]
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map((d) => ({ name: d.name, mine: myPct[d.risk_domain_id] ?? 0, peer: d.percentage }));
+          y = compareTable(y, peerRows);
+        } else {
+          doc.setFont("Roboto", "normal");
+          doc.setFontSize(9.5);
+          doc.setTextColor(90);
+          const note = "Karşılaştırma için yeterli sayıda okul verisi bulunmuyor. Bu bölüm, aynı kademede RAM'a gönderim yapan en az 3 diğer okul bulunduğunda oluşturulur.";
+          const lines = doc.splitTextToSize(note, contentW);
+          doc.text(lines, marginX, y + 14);
+          doc.setTextColor(0);
+          y += 14 + lines.length * 13;
+        }
+        y += 22;
+      }
+
+      // ---- Hesaplama ve Yorumlama Notları ----
+      const notes = [
+        "Risk oranlarının paydasında yalnızca Risk Haritası formu tamamlanan öğrenciler bulunur; tamamlanmayan öğrenciler dahil edilmez.",
+        "Aynı öğrenci, bir ana risk alanında birden fazla maddeye sahip olsa bile o alanda yalnızca bir kez sayılır.",
+        "36 risk maddesinin her biri ayrı değerlendirilir; bir öğrenci farklı maddelerde ayrı ayrı sayılabilir, ancak aynı maddede yalnızca bir kez sayılır.",
+        "Risk alanları ve risk maddeleri birbirinden bağımsız olduğundan yüzdelerin toplamının %100 olması beklenmez.",
+        "Okul ve sınıf istatistikleri mevcut canlı verilere dayanır.",
+        "Karşılaştırma grubu, aynı kademedeki diğer okulların RAM'a gönderdikleri en güncel snapshot sonuçlarından oluşturulur.",
+        "Karşılaştırmada okul yüzdelerinin basit ortalaması alınmaz; ilgili risk alanındaki toplam öğrenci sayısı, toplam tamamlanmış form sayısına bölünür.",
+        "Okulun kendisi karşılaştırma (referans) grubuna dahil edilmez.",
+        "Sonuçlar tanı koymaz veya öğrencilerin risk düzeyini derecelendirmez; rehberlik çalışmalarının planlanmasını destekleyen göstergelerdir.",
+      ];
+      y = sectionTitle(y, "Hesaplama ve Yorumlama Notları");
+      y += 8;
+      doc.setFont("Roboto", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(60);
+      notes.forEach((n) => {
+        const lines = doc.splitTextToSize(`•  ${n}`, contentW);
+        if (y + lines.length * 12 > pageH - 45) { doc.addPage(); y = 50; }
+        doc.text(lines, marginX, y);
+        y += lines.length * 12 + 4;
+      });
+      doc.setTextColor(0);
+
+      // ---- Footer + page numbers on every page ----
+      const total = doc.getNumberOfPages();
+      for (let p = 1; p <= total; p++) {
+        doc.setPage(p);
+        doc.setFont("Roboto", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(130);
+        doc.text("PDRPUSULA – Risk Haritası İstatistik Raporu", marginX, pageH - 20);
+        doc.text(`Rapor tarihi: ${generatedAt}`, pageW / 2, pageH - 20, { align: "center" });
+        doc.text(`Sayfa ${p} / ${total}`, pageW - marginX, pageH - 20, { align: "right" });
+      }
+      doc.setTextColor(0);
+
+      const safeYear = String(yearName).replace(/[^0-9A-Za-z-]+/g, "-").replace(/^-+|-+$/g, "") || "rapor";
+      doc.save(`PDRPUSULA_Risk_Haritasi_Istatistik_Raporu_${safeYear}.pdf`);
+    } catch (_) {
+      setPdfError("PDF raporu oluşturulamadı. Lütfen tekrar deneyin.");
+    }
+    setPdfBusy(false);
+  };
+
   useEffect(() => {
     (async () => { await load(); setReady(true); })();
   }, [load]);
@@ -154,13 +439,29 @@ export default function SchoolStatistics() {
               <h1 className="text-lg font-extrabold text-white" data-testid="schoolstats-title">İstatistikler</h1>
             </div>
           </div>
-          <button onClick={() => navigate("/school")} data-testid="schoolstats-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
-            <ArrowLeft size={15} /> Okul Paneli
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={downloadPdf}
+              disabled={!data || pdfBusy}
+              data-testid="schoolstats-pdf-btn"
+              className="inline-flex items-center gap-2 rounded-full bg-indigo-500/15 px-4 py-2 text-sm font-semibold text-indigo-300 ring-1 ring-indigo-400/30 transition hover:bg-indigo-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {pdfBusy ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
+              {pdfBusy ? "Hazırlanıyor..." : "PDF Olarak İndir"}
+            </button>
+            <button onClick={() => navigate("/school")} data-testid="schoolstats-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+              <ArrowLeft size={15} /> Okul Paneli
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8">
+        {pdfError && (
+          <div data-testid="schoolstats-pdf-error" className="mb-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{pdfError}</span>
+          </div>
+        )}
         {error ? (
           <div data-testid="schoolstats-error" className="flex items-start gap-2 rounded-xl bg-rose-500/10 p-4 text-sm text-rose-300 ring-1 ring-rose-400/20">
             <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{error}</span>
