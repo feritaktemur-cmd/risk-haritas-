@@ -2261,25 +2261,17 @@ async def admin_school_refs(request: Request):
     }
 
 
-@api.get("/admin/risk-map/aggregate")
-async def admin_risk_map_aggregate(request: Request, academic_year_id: str = None, district_id: int = None,
-                                   education_level_id: int = None, school_type_id: int = None,
-                                   management_type_id: int = None):
-    """Anonymous aggregated Risk Map across schools for ONE academic year.
+def _aggregate_snapshots(client, academic_year_id, district_id=None, education_level_id=None,
+                         school_type_id=None, management_type_id=None, exclude_school_id=None):
+    """Shared snapshot aggregation core (single source of truth).
 
-    General Admin only. Reads ONLY snapshot tables. For each school+year the
-    HIGHEST version_no submission is used (older versions excluded). Optional
-    filters (district / education level / school type / management type) are
-    applied with AND on school attributes; they only change WHICH schools are
-    included — the snapshot math is unchanged. Percentages use
-    SUM(student_count)/SUM(completed_students). No student identity returned.
+    Reads ONLY snapshot tables. For each school+year the HIGHEST version_no
+    submission is used (older versions excluded). Optional AND filters on
+    school attributes only change WHICH schools are included. `exclude_school_id`
+    drops the caller's own school (used by peer comparison). Percentages use
+    SUM(student_count)/SUM(completed_students) — never an average of per-school
+    percentages. No student identity is read/returned.
     """
-    _require_general_admin(request)
-    client = get_service_client()
-
-    if not academic_year_id:
-        raise HTTPException(status_code=400, detail="Eğitim yılı seçilmedi.")
-
     subs = _fetch_all(
         lambda a, b: client.table("school_submissions")
         .select("id,school_id,version_no,total_students,completed_students,not_entered_students,total_risk_marks,"
@@ -2299,6 +2291,8 @@ async def admin_risk_map_aggregate(request: Request, academic_year_id: str = Non
         if school_type_id is not None and sc.get("school_type_id") != school_type_id:
             continue
         if management_type_id is not None and sc.get("management_type_id") != management_type_id:
+            continue
+        if exclude_school_id is not None and s["school_id"] == exclude_school_id:
             continue
         cur = latest.get(s["school_id"])
         if cur is None or s["version_no"] > cur["version_no"]:
@@ -2357,6 +2351,107 @@ async def admin_risk_map_aggregate(request: Request, academic_year_id: str = Non
         "domains": domains,
         "categories": categories,
     }
+
+
+@api.get("/admin/risk-map/aggregate")
+async def admin_risk_map_aggregate(request: Request, academic_year_id: str = None, district_id: int = None,
+                                   education_level_id: int = None, school_type_id: int = None,
+                                   management_type_id: int = None):
+    """Anonymous aggregated Risk Map across schools for ONE academic year.
+
+    General Admin only. Reads ONLY snapshot tables. For each school+year the
+    HIGHEST version_no submission is used (older versions excluded). Optional
+    filters (district / education level / school type / management type) are
+    applied with AND on school attributes; they only change WHICH schools are
+    included — the snapshot math is unchanged. Percentages use
+    SUM(student_count)/SUM(completed_students). No student identity returned.
+    """
+    _require_general_admin(request)
+    client = get_service_client()
+
+    if not academic_year_id:
+        raise HTTPException(status_code=400, detail="Eğitim yılı seçilmedi.")
+
+    return _aggregate_snapshots(
+        client, academic_year_id,
+        district_id=district_id,
+        education_level_id=education_level_id,
+        school_type_id=school_type_id,
+        management_type_id=management_type_id,
+    )
+
+
+@api.get("/school/risk-map/peer-comparison")
+async def school_risk_map_peer_comparison(request: Request):
+    """Anonymous 8-domain comparison of the caller's education level.
+
+    School account only. The reference group is the aggregated latest snapshots
+    of OTHER schools at the SAME education level (active year); the caller's own
+    school is excluded. Uses the shared _aggregate_snapshots core (SUM/SUM math,
+    latest-version selection). Privacy: if fewer than 3 peer schools exist, no
+    domain percentages are returned. Never returns any other school's name/id,
+    per-school result, or any student-level data.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi.")
+
+    rows = (
+        client.table("schools")
+        .select("education_level_id,education_level:education_levels(name)")
+        .eq("id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    edu_id = rows[0]["education_level_id"] if rows else None
+    edu_name = (rows[0].get("education_level") or {}).get("name") if rows else None
+
+    if edu_id is None:
+        return {
+            "eligible": False,
+            "reason": "no_education_level",
+            "education_level": edu_name,
+            "min_schools": 3,
+            "schools_count": 0,
+            "total_completed": 0,
+        }
+
+    agg = _aggregate_snapshots(
+        client, year["id"],
+        education_level_id=edu_id,
+        exclude_school_id=school_id,
+    )
+    schools_count = agg["summary"]["schools_count"]
+    total_completed = agg["summary"]["completed"]
+
+    if schools_count < 3:
+        return {
+            "eligible": False,
+            "reason": "insufficient_peers",
+            "education_level": edu_name,
+            "min_schools": 3,
+            "schools_count": schools_count,
+            "total_completed": total_completed,
+        }
+
+    domains = [
+        {"risk_domain_id": d["risk_domain_id"], "name": d["name"],
+         "sort_order": d["sort_order"], "percentage": d["percentage"]}
+        for d in agg["domains"]
+    ]
+    return {
+        "eligible": True,
+        "education_level": edu_name,
+        "schools_count": schools_count,
+        "total_completed": total_completed,
+        "domains": domains,
+    }
+
+
 
 
 @api.get("/admin/risk-map/tracking")

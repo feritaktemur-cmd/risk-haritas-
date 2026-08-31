@@ -35,6 +35,32 @@ const DomainBar = ({ name, count, percentage }) => (
   </div>
 );
 
+const CompareBar = ({ name, mine, peer }) => (
+  <div className="rounded-xl border border-white/8 bg-white/[0.02] p-3" data-testid="schoolstats-compare-row">
+    <p className="mb-2 text-sm font-medium text-slate-200">{name}</p>
+    <div className="space-y-2">
+      <div>
+        <div className="mb-1 flex items-baseline justify-between gap-3">
+          <span className="text-xs font-semibold text-emerald-300">Okulum</span>
+          <span className="shrink-0 text-xs font-semibold text-slate-300">%{fmtPct(mine)}</span>
+        </div>
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, mine)}%` }} />
+        </div>
+      </div>
+      <div>
+        <div className="mb-1 flex items-baseline justify-between gap-3">
+          <span className="text-xs font-semibold text-indigo-300">Aynı Kademedeki Diğer Okullar</span>
+          <span className="shrink-0 text-xs font-semibold text-slate-300">%{fmtPct(peer)}</span>
+        </div>
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+          <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, peer)}%` }} />
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 export default function SchoolStatistics() {
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
@@ -50,6 +76,9 @@ export default function SchoolStatistics() {
   const [classError, setClassError] = useState(null);
   const [howClassOpen, setHowClassOpen] = useState(false);
 
+  const [peer, setPeer] = useState(null);
+  const [howPeerOpen, setHowPeerOpen] = useState(false);
+
   const load = useCallback(async () => {
     const h = await authHeader();
     if (!h) { navigate("/school/login", { replace: true }); return null; }
@@ -60,6 +89,10 @@ export default function SchoolStatistics() {
         const initRes = await axios.get(`${API}/school/risk/init`, { headers: h });
         setClasses(initRes.data.classes || []);
       } catch (_) { /* class list is secondary; ignore its failure */ }
+      try {
+        const peerRes = await axios.get(`${API}/school/risk-map/peer-comparison`, { headers: h });
+        setPeer(peerRes.data);
+      } catch (_) { /* peer comparison is secondary; ignore its failure */ }
       return res.data;
     } catch (err) {
       const detail = err.response?.data?.detail;
@@ -341,6 +374,85 @@ export default function SchoolStatistics() {
                         </p>
                         <p>
                           <span className="font-semibold text-slate-300">Önemli not:</span> Aynı öğrencide birden fazla risk maddesi bulunabileceğinden 36 maddenin yüzdelerinin toplamının %100 olması beklenmez.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </section>
+
+            {/* Aynı Kademedeki Okullarla Karşılaştırma */}
+            <section className="mt-12" data-testid="schoolstats-peer-section">
+              <h3 className="text-base font-bold text-white">Aynı Kademedeki Okullarla Karşılaştırma</h3>
+
+              {!peer ? (
+                <p className="mt-4 text-sm text-slate-400" data-testid="schoolstats-peer-hint">
+                  Karşılaştırma verisi şu anda yüklenemedi.
+                </p>
+              ) : !peer.eligible ? (
+                <div className="mt-4 flex items-start gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-slate-400" data-testid="schoolstats-peer-insufficient">
+                  <Info size={16} className="mt-0.5 shrink-0 text-slate-500" />
+                  <span>
+                    {peer.education_level ? `${peer.education_level} kademesinde ` : ""}
+                    karşılaştırma için yeterli sayıda okul verisi bulunmuyor. Aynı kademede RAM'a gönderim yapan en az {peer.min_schools || 3} diğer okul olduğunda bu bölüm gösterilecektir.
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <p className="mt-1 text-sm text-indigo-300" data-testid="schoolstats-peer-context">
+                    {peer.education_level} · {peer.schools_count} diğer okul · {peer.total_completed.toLocaleString("tr-TR")} tamamlanmış form
+                  </p>
+
+                  <div className="mt-5 space-y-2.5" data-testid="schoolstats-peer-domains">
+                    {(() => {
+                      const myPct = {};
+                      (data.domains || []).forEach((d) => { myPct[d.risk_domain_id] = d.percentage; });
+                      return [...(peer.domains || [])]
+                        .sort((a, b) => a.sort_order - b.sort_order)
+                        .map((d) => (
+                          <CompareBar key={d.risk_domain_id} name={d.name} mine={myPct[d.risk_domain_id] ?? 0} peer={d.percentage} />
+                        ));
+                    })()}
+                  </div>
+
+                  {/* Bu grafik neyi gösterir? (varsayılan açık) */}
+                  <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-4" data-testid="schoolstats-peer-explain">
+                    <p className="mb-1.5 text-sm font-semibold text-slate-200">Bu grafik neyi gösterir?</p>
+                    <div className="space-y-2 text-sm leading-relaxed text-slate-400">
+                      <p>
+                        Bu grafik, okulunuzdaki 8 ana risk alanının güncel oranlarını, aynı eğitim kademesindeki diğer okulların RAM'a gönderdikleri en güncel Risk Haritası sonuçlarından oluşturulan toplulaştırılmış oranlarla karşılaştırır. Karşılaştırma, okulunuzun sonuçlarını daha geniş bir bağlam içinde değerlendirmeye yardımcı olur; tek tek okul sonuçları gösterilmez.
+                      </p>
+                      <p>
+                        Okulunuzun değerleri mevcut canlı verilerinizden hesaplanır. Karşılaştırma grubu ise diğer okulların RAM'a gönderdikleri en güncel snapshot verilerine dayanır. Bu nedenle iki veri farklı zamanlara ait olabilir.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Nasıl hesaplanıyor? (varsayılan kapalı) */}
+                  <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-white/[0.02]">
+                    <button
+                      onClick={() => setHowPeerOpen((v) => !v)}
+                      data-testid="schoolstats-peer-how-toggle"
+                      className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold text-slate-200 transition hover:bg-white/[0.03]"
+                    >
+                      <span>Nasıl hesaplanıyor?</span>
+                      <ChevronDown size={16} className={`shrink-0 text-slate-400 transition-transform ${howPeerOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    {howPeerOpen && (
+                      <div className="space-y-2 border-t border-white/10 px-4 py-3 text-sm leading-relaxed text-slate-400" data-testid="schoolstats-peer-how-content">
+                        <p>
+                          Karşılaştırma grubuna aynı eğitim kademesindeki diğer okullar dahil edilir; giriş yapan okulunuz bu gruptan çıkarılır. Her okul için yalnızca aktif eğitim yılındaki en güncel Risk Haritası gönderimi kullanılır.
+                        </p>
+                        <p>
+                          Okulların yüzdelerinin ortalaması alınmaz. Bunun yerine ilgili risk alanındaki toplam öğrenci sayısı, bu okullardaki toplam tamamlanmış form sayısına bölünür. Böylece büyük ve küçük okullar aynı ağırlıkta değerlendirilmez.
+                        </p>
+                        <p>
+                          <span className="font-semibold text-slate-300">Hesaplama formülü:</span><br />
+                          Aynı kademedeki diğer okullarda ilgili risk alanındaki toplam öğrenci sayısı ÷ Bu okullardaki toplam tamamlanmış form sayısı × 100
+                        </p>
+                        <p>
+                          Sonuçlar yalnızca toplulaştırılmış olarak gösterilir; tek tek okul sonuçları veya okul adları paylaşılmaz.
                         </p>
                       </div>
                     )}
