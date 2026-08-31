@@ -43,12 +43,23 @@ export default function SchoolStatistics() {
   const [howOpen, setHowOpen] = useState(false);
   const [howCatOpen, setHowCatOpen] = useState(false);
 
+  const [classes, setClasses] = useState([]);
+  const [classId, setClassId] = useState("");
+  const [classData, setClassData] = useState(null);
+  const [classLoading, setClassLoading] = useState(false);
+  const [classError, setClassError] = useState(null);
+  const [howClassOpen, setHowClassOpen] = useState(false);
+
   const load = useCallback(async () => {
     const h = await authHeader();
     if (!h) { navigate("/school/login", { replace: true }); return null; }
     try {
       const res = await axios.get(`${API}/school/risk-map/school`, { headers: h });
       setData(res.data);
+      try {
+        const initRes = await axios.get(`${API}/school/risk/init`, { headers: h });
+        setClasses(initRes.data.classes || []);
+      } catch (_) { /* class list is secondary; ignore its failure */ }
       return res.data;
     } catch (err) {
       const detail = err.response?.data?.detail;
@@ -63,6 +74,27 @@ export default function SchoolStatistics() {
       return null;
     }
   }, [navigate]);
+
+  const loadClass = useCallback(async (cid) => {
+    setClassData(null);
+    setClassError(null);
+    if (!cid) return;
+    setClassLoading(true);
+    const h = await authHeader();
+    if (!h) { navigate("/school/login", { replace: true }); return; }
+    try {
+      const res = await axios.get(`${API}/school/risk-map/class`, { headers: h, params: { school_class_id: cid } });
+      setClassData(res.data);
+    } catch (err) {
+      setClassError(err.response?.data?.detail || "Sınıf analizi yüklenemedi.");
+    }
+    setClassLoading(false);
+  }, [navigate]);
+
+  const onClassChange = (cid) => {
+    setClassId(cid);
+    loadClass(cid);
+  };
 
   useEffect(() => {
     (async () => { await load(); setReady(true); })();
@@ -229,6 +261,92 @@ export default function SchoolStatistics() {
                   </div>
                 )}
               </div>
+            </section>
+
+            {/* Sınıf Bazlı 36 Risk Maddesi */}
+            <section className="mt-12 rounded-2xl border border-indigo-400/20 bg-indigo-500/[0.04] p-5" data-testid="schoolstats-class-section">
+              <h3 className="text-base font-bold text-white">
+                Sınıf Bazlı 36 Risk Maddesi
+                {classData ? <span className="text-sm font-normal text-indigo-300"> — {classData.class_label} · Risk Maddelerinin Dağılımı</span> : null}
+              </h3>
+
+              <div className="mt-4">
+                <label className="mb-1 block text-xs font-medium text-slate-400">Sınıf / Şube</label>
+                <select
+                  value={classId}
+                  onChange={(e) => onClassChange(e.target.value)}
+                  data-testid="schoolstats-class-select"
+                  className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60"
+                >
+                  <option value="">Sınıf seçin</option>
+                  {classes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.level}/{c.branch}</option>
+                  ))}
+                </select>
+              </div>
+
+              {classLoading ? (
+                <div className="grid place-items-center py-12"><Loader2 size={24} className="animate-spin text-indigo-300" /></div>
+              ) : classError ? (
+                <div data-testid="schoolstats-class-error" className="mt-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-4 text-sm text-rose-300 ring-1 ring-rose-400/20">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{classError}</span>
+                </div>
+              ) : !classData ? (
+                <p className="mt-4 text-sm text-slate-400" data-testid="schoolstats-class-hint">
+                  Sınıf bazlı risk maddesi dağılımını görüntülemek için yukarıdan bir sınıf/şube seçin.
+                </p>
+              ) : (
+                <>
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <StatCard icon={Users} label="Toplam Öğrenci" value={classData.summary.total_students} tone="text-slate-300" testid="schoolstats-class-total" />
+                    <StatCard icon={CheckCircle2} label="Formu Tamamlanan" value={classData.summary.completed} tone="text-emerald-400" testid="schoolstats-class-completed" />
+                    <StatCard icon={Circle} label="Formu Tamamlanmayan" value={classData.summary.not_entered} tone="text-slate-500" testid="schoolstats-class-not-entered" />
+                    <StatCard icon={Percent} label="Tamamlanma Oranı" value={`%${classData.summary.completion_rate}`} tone="text-indigo-400" testid="schoolstats-class-rate" />
+                  </div>
+
+                  <div className="mt-5 space-y-2.5" data-testid="schoolstats-class-categories">
+                    {[...(classData.categories || [])]
+                      .sort((a, b) => (b.percentage - a.percentage) || (a.sort_order - b.sort_order))
+                      .map((c) => (
+                        <DomainBar key={c.risk_category_id} name={c.label} count={c.student_count} percentage={c.percentage} />
+                      ))}
+                  </div>
+
+                  {/* Bu grafik neyi gösterir? (varsayılan açık) */}
+                  <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-4" data-testid="schoolstats-class-explain">
+                    <p className="mb-1.5 text-sm font-semibold text-slate-200">Bu grafik neyi gösterir?</p>
+                    <p className="text-sm leading-relaxed text-slate-400">
+                      Bu grafik, seçilen sınıfta Risk Haritası formu tamamlanan öğrenciler arasında 36 risk maddesinin görülme sıklığını gösterir. Maddeler en yaygın görülen risk göstergesinden en az görülene doğru sıralanır.
+                    </p>
+                  </div>
+
+                  {/* Nasıl hesaplanıyor? (varsayılan kapalı) */}
+                  <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-white/[0.02]">
+                    <button
+                      onClick={() => setHowClassOpen((v) => !v)}
+                      data-testid="schoolstats-class-how-toggle"
+                      className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold text-slate-200 transition hover:bg-white/[0.03]"
+                    >
+                      <span>Nasıl hesaplanıyor?</span>
+                      <ChevronDown size={16} className={`shrink-0 text-slate-400 transition-transform ${howClassOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    {howClassOpen && (
+                      <div className="space-y-2 border-t border-white/10 px-4 py-3 text-sm leading-relaxed text-slate-400" data-testid="schoolstats-class-how-content">
+                        <p>
+                          Hesaplamada yalnızca seçilen sınıfta Risk Haritası formu tamamlanmış öğrenciler dikkate alınır. Her risk maddesi ayrı olarak değerlendirilir. Bir öğrenci farklı risk maddelerinin her birinde ayrı ayrı sayılabilir; ancak aynı öğrenci aynı risk maddesi için yalnızca bir kez sayılır.
+                        </p>
+                        <p>
+                          <span className="font-semibold text-slate-300">Hesaplama formülü:</span><br />
+                          Seçilen sınıfta ilgili risk maddesinin bulunduğu öğrenci sayısı ÷ Seçilen sınıfta formu tamamlanan öğrenci sayısı × 100
+                        </p>
+                        <p>
+                          <span className="font-semibold text-slate-300">Önemli not:</span> Aynı öğrencide birden fazla risk maddesi bulunabileceğinden 36 maddenin yüzdelerinin toplamının %100 olması beklenmez.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </section>
           </>
         ) : null}
