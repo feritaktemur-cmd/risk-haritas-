@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, BarChart3, Users, CheckCircle2, Circle, Percent, Info } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, BarChart3, Users, CheckCircle2, Circle, Percent, Info, ChevronDown } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -21,11 +21,26 @@ const StatCard = ({ icon: Icon, label, value, tone, testid }) => (
   </div>
 );
 
+const fmtPct = (n) => String(n).replace(".", ",");
+
+const DomainBar = ({ name, count, percentage }) => (
+  <div className="rounded-xl border border-white/8 bg-white/[0.02] p-3" data-testid="schoolstats-domain-row">
+    <div className="mb-1.5 flex items-baseline justify-between gap-3">
+      <span className="text-sm text-slate-200">{name}</span>
+      <span className="shrink-0 text-xs font-semibold text-slate-300">%{fmtPct(percentage)} · {count} öğrenci</span>
+    </div>
+    <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+      <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-indigo-500" style={{ width: `${Math.min(100, percentage)}%` }} />
+    </div>
+  </div>
+);
+
 export default function SchoolStatistics() {
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [howOpen, setHowOpen] = useState(false);
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -104,6 +119,67 @@ export default function SchoolStatistics() {
                 Bu sayfadaki istatistikler mevcut öğrenci kayıtlarına göre canlı olarak hesaplanmaktadır. Risk oranlarının hesaplanmasında yalnızca formu tamamlanan öğrenciler esas alınır.
               </span>
             </div>
+
+            {/* 8 Ana Risk Alanının Dağılımı */}
+            <section className="mt-10" data-testid="schoolstats-domains-section">
+              <h3 className="text-base font-bold text-white">8 Ana Risk Alanının Dağılımı</h3>
+
+              <div className="mt-4 space-y-2.5" data-testid="schoolstats-domains">
+                {[...(data.domains || [])]
+                  .sort((a, b) => (b.percentage - a.percentage) || (a.sort_order - b.sort_order))
+                  .map((d) => (
+                    <DomainBar key={d.risk_domain_id} name={d.name} count={d.student_count} percentage={d.percentage} />
+                  ))}
+              </div>
+
+              {/* Bu grafik neyi gösterir? (varsayılan açık) */}
+              <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-4" data-testid="schoolstats-domains-explain">
+                <p className="mb-1.5 text-sm font-semibold text-slate-200">Bu grafik neyi gösterir?</p>
+                <div className="space-y-2 text-sm leading-relaxed text-slate-400">
+                  <p>
+                    Bu grafik, Risk Haritası formu tamamlanmış öğrenciler arasında, her bir ana risk alanında en az bir risk göstergesi bulunan öğrencilerin oranını ve öğrenci sayısını gösterir.
+                  </p>
+                  <p>
+                    Risk alanları, okulda hangi alanlardaki risk göstergelerinin öğrenciler arasında daha yaygın olduğunu görebilmek amacıyla en yüksek orandan en düşük orana doğru sıralanır.
+                  </p>
+                  <p>
+                    Grafikteki oranlar öğrencilerin tanılanması veya risk düzeylerinin derecelendirilmesi anlamına gelmez. Sonuçlar, okulun mevcut verileri üzerinden genel durumu görmeye ve rehberlik çalışmalarının planlanmasına yardımcı olan göstergelerdir.
+                  </p>
+                </div>
+              </div>
+
+              {/* Nasıl hesaplanıyor? (varsayılan kapalı) */}
+              <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-white/[0.02]">
+                <button
+                  onClick={() => setHowOpen((v) => !v)}
+                  data-testid="schoolstats-how-toggle"
+                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold text-slate-200 transition hover:bg-white/[0.03]"
+                >
+                  <span>Nasıl hesaplanıyor?</span>
+                  <ChevronDown size={16} className={`shrink-0 text-slate-400 transition-transform ${howOpen ? "rotate-180" : ""}`} />
+                </button>
+                {howOpen && (
+                  <div className="space-y-2 border-t border-white/10 px-4 py-3 text-sm leading-relaxed text-slate-400" data-testid="schoolstats-how-content">
+                    <p>
+                      Hesaplamada yalnızca Risk Haritası formu tamamlanmış öğrenciler dikkate alınır. Formu henüz tamamlanmamış öğrenciler risk oranlarının hesaplanmasına dahil edilmez.
+                    </p>
+                    <p>
+                      Bir öğrencinin aynı ana risk alanına ait birden fazla risk maddesi işaretlenmiş olabilir. Böyle bir durumda öğrenci o risk alanında yalnızca bir kez sayılır. Örneğin aynı öğrencide bir risk alanına ait 3 farklı madde işaretlenmişse bu durum "3 öğrenci" olarak değil, "1 öğrenci" olarak hesaplanır.
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-300">Hesaplama formülü:</span><br />
+                      İlgili risk alanında en az bir risk göstergesi bulunan öğrenci sayısı ÷ Formu tamamlanan öğrenci sayısı × 100
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-300">Örnek:</span> Okulda 120 öğrenci bulunuyor ve 100 öğrencinin Risk Haritası formu tamamlanmış olsun. Bu 100 öğrencinin 25'inde belirli bir risk alanına ait en az bir risk göstergesi varsa grafikte: %25 · 25 öğrenci gösterilir. Okuldaki diğer 20 öğrencinin formu henüz tamamlanmadığı için bu öğrenciler oranın paydasına dahil edilmez.
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-300">Önemli not:</span> Aynı öğrenci birden fazla ana risk alanında risk göstergesine sahip olabilir. Bu nedenle grafikteki 8 risk alanının yüzdeleri birbirinden bağımsızdır ve toplamlarının %100 olması beklenmez.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
           </>
         ) : null}
       </main>
