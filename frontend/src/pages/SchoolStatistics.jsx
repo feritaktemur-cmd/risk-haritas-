@@ -41,6 +41,7 @@ export default function SchoolStatistics() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [howOpen, setHowOpen] = useState(false);
+  const [howCatOpen, setHowCatOpen] = useState(false);
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -175,6 +176,55 @@ export default function SchoolStatistics() {
                     </p>
                     <p>
                       <span className="font-semibold text-slate-300">Önemli not:</span> Aynı öğrenci birden fazla ana risk alanında risk göstergesine sahip olabilir. Bu nedenle grafikteki 8 risk alanının yüzdeleri birbirinden bağımsızdır ve toplamlarının %100 olması beklenmez.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* 36 Risk Maddesinin Dağılımı */}
+            <section className="mt-10" data-testid="schoolstats-categories-section">
+              <h3 className="text-base font-bold text-white">36 Risk Maddesinin Dağılımı</h3>
+
+              <div className="mt-4 space-y-2.5" data-testid="schoolstats-categories">
+                {[...(data.categories || [])]
+                  .sort((a, b) => (b.percentage - a.percentage) || (a.sort_order - b.sort_order))
+                  .map((c) => (
+                    <DomainBar key={c.risk_category_id} name={c.label} count={c.student_count} percentage={c.percentage} />
+                  ))}
+              </div>
+
+              {/* Bu grafik neyi gösterir? (varsayılan açık) */}
+              <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-4" data-testid="schoolstats-categories-explain">
+                <p className="mb-1.5 text-sm font-semibold text-slate-200">Bu grafik neyi gösterir?</p>
+                <div className="space-y-2 text-sm leading-relaxed text-slate-400">
+                  <p>
+                    Bu grafik, Risk Haritası formu tamamlanan öğrenciler arasında 36 risk maddesinin her birinin kaç öğrencide görüldüğünü ve bu öğrencilerin tamamlanan formlar içindeki oranını gösterir. Maddeler en yaygın görülen risk göstergesinden en az görülene doğru sıralanarak okulda öne çıkan somut risklerin kolayca fark edilmesini sağlar.
+                  </p>
+                </div>
+              </div>
+
+              {/* Nasıl hesaplanıyor? (varsayılan kapalı) */}
+              <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-white/[0.02]">
+                <button
+                  onClick={() => setHowCatOpen((v) => !v)}
+                  data-testid="schoolstats-cat-how-toggle"
+                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-semibold text-slate-200 transition hover:bg-white/[0.03]"
+                >
+                  <span>Nasıl hesaplanıyor?</span>
+                  <ChevronDown size={16} className={`shrink-0 text-slate-400 transition-transform ${howCatOpen ? "rotate-180" : ""}`} />
+                </button>
+                {howCatOpen && (
+                  <div className="space-y-2 border-t border-white/10 px-4 py-3 text-sm leading-relaxed text-slate-400" data-testid="schoolstats-cat-how-content">
+                    <p>
+                      Her risk maddesi ayrı olarak değerlendirilir. Bir öğrenci, işaretlenmiş olan farklı risk maddelerinin her birinde ayrı ayrı sayılabilir. Ancak aynı öğrenci aynı risk maddesi için yalnızca bir kez sayılır. Hesaplamaya yalnızca Risk Haritası formu tamamlanmış öğrenciler dahil edilir.
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-300">Hesaplama formülü:</span><br />
+                      İlgili risk maddesinin bulunduğu öğrenci sayısı ÷ Formu tamamlanan öğrenci sayısı × 100
+                    </p>
+                    <p>
+                      <span className="font-semibold text-slate-300">Önemli not:</span> 36 maddenin yüzdeleri birbirinden bağımsızdır. Aynı öğrencide birden fazla risk maddesi bulunabileceğinden yüzdelerin toplamının %100 olması beklenmez.
                     </p>
                   </div>
                 )}
