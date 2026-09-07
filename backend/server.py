@@ -536,6 +536,61 @@ async def school_login(request: Request):
     }
 
 
+@api.post("/ram/login")
+async def ram_login(request: Request):
+    """Username + password login for RAM institutional accounts.
+
+    RAM counterpart of /school/login. Resolves the visible username to the
+    synthetic (hidden) Auth email, verifies password via Supabase Auth (anon
+    client), and returns session tokens. ram_id comes ONLY from the resolved
+    ram_accounts row (never from the client). Generic errors; existence is not
+    leaked. Secret key stays backend.
+    """
+    body = await request.json()
+    username = (body or {}).get("username", "")
+    password = (body or {}).get("password", "")
+    username_norm = str(username).strip().lower()
+    if not username_norm or not password:
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+
+    client = get_service_client()
+    rows = (
+        client.table("ram_accounts")
+        .select("id,ram_id,username,is_active,must_change_password")
+        .eq("username", username_norm)
+        .limit(1)
+        .execute()
+        .data
+    )
+    acc = rows[0] if rows else None
+    if acc is None:
+        # Do not leak whether the username exists.
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+    if not acc.get("is_active"):
+        raise HTTPException(status_code=403, detail="Bu hesapla giriş yapılamıyor. Lütfen Genel Admin ile iletişime geçin.")
+
+    # Resolve the hidden synthetic email deterministically from the username.
+    synth_email = synth_email_for(acc["username"])
+
+    # Verify password via Supabase Auth using the anon (publishable) client.
+    anon = get_anon_client()
+    try:
+        auth_res = anon.auth.sign_in_with_password({"email": synth_email, "password": password})
+        session = getattr(auth_res, "session", None)
+    except Exception:  # noqa: BLE001
+        session = None
+    if session is None or not getattr(session, "access_token", None):
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+
+    return {
+        "access_token": session.access_token,
+        "refresh_token": session.refresh_token,
+        "username": acc["username"],
+        "ram_id": acc["ram_id"],
+        "must_change_password": bool(acc.get("must_change_password")),
+    }
+
+
 @api.get("/school/session")
 async def school_session(request: Request):
     """Session info for routing (works even if must_change_password=true)."""
