@@ -85,7 +85,13 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
   Backend aggregate: summary, target_types (4'ü de), monthly (yıl+ay), titles, activity_types,
   districts (ad çözümlü), institutions (exact). Frontend İstatistikler sekmesi: 5 özet kartı,
   hedef türü barları, aylık barlar, 4 tablo. Yıl Sonu Raporu hâlâ "Yakında".
-- Sonraki: Yıl Sonu PDF (P1); Genel Admin RAM aktif/pasif & şifre sıfırlama (P2).
+- Aşama 5 Raporlar / PDF: TAMAM (Haziran 2026). GET /api/ram/activities/report
+  (detailed=true|false); _require_ram_ready + ram_id izolasyonu, tarih filtresi (ters aralıkta 400).
+  İstatistik matematiği ortak _compute_ram_statistics helper'ına refactor edildi — /statistics ve
+  /report aynı kaynağı kullanır (davranış değişmedi). RAM adı token bağlamından (rams tablosu).
+  Frontend: "Raporlar / PDF" sekmesi (tarih + Özet/Ayrıntılı seçimi), jspdf+autotable+Roboto TTF
+  ile client-side PDF (src/lib/ramReportPdf.js). Boş veride PDF üretilmez, uyarı gösterilir.
+- Sonraki: Genel Admin RAM aktif/pasif & şifre sıfırlama (P2).
 
 ## Backlog / Sonraki olası görevler
 - RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)

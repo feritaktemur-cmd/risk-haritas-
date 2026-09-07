@@ -1107,42 +1107,36 @@ async def ram_list_activities(request: Request):
     return {"activities": activities, "count": len(activities)}
 
 
-@api.get("/ram/activities/statistics")
-async def ram_activities_statistics(request: Request):
-    """Aggregate statistics for the logged-in RAM's own activities only.
+def _fetch_ram_activity_rows(client, ram_id, date_from, date_to, full=False):
+    """Fetch a RAM's own activity rows, optionally date-filtered.
 
-    RAM isolation: ram_id resolved from the token; the query is ALWAYS limited
-    to ram_activities.ram_id = acc["ram_id"]. Optional date_from/date_to filter
-    (date_from > date_to -> 400). All metrics are computed in the backend from
-    the real rows. total_participants = student + teacher + parent (never in DB).
+    ALWAYS scoped to ram_id = the caller's own RAM. `full=True` also selects the
+    fields needed for the detailed report (note, created_at).
     """
-    _uid, acc = _require_ram_ready(request)
-    ram_id = acc["ram_id"]
-
-    qp = request.query_params
-    date_from = (qp.get("date_from") or "").strip()
-    date_to = (qp.get("date_to") or "").strip()
-    if date_from and date_to and date_from > date_to:
-        raise HTTPException(status_code=400, detail="Başlangıç tarihi bitiş tarihinden sonra olamaz.")
-
-    client = get_service_client()
-    query = (
-        client.table("ram_activities")
-        .select("activity_date,district_id,institution_name,activity_type,title,target_type,student_count,teacher_count,parent_count")
-        .eq("ram_id", ram_id)
-    )
+    cols = "activity_date,district_id,institution_name,activity_type,title,target_type,student_count,teacher_count,parent_count"
+    if full:
+        cols += ",note,created_at,id"
+    query = client.table("ram_activities").select(cols).eq("ram_id", ram_id)
     if date_from:
         query = query.gte("activity_date", date_from)
     if date_to:
         query = query.lte("activity_date", date_to)
-    rows = query.execute().data or []
+    return query.execute().data or []
 
+
+def _compute_ram_statistics(rows, client):
+    """Single source of truth for RAM activity statistics.
+
+    Used by BOTH the /statistics endpoint and the PDF /report endpoint so the
+    numbers are identical on screen and in the PDF. total_participants is always
+    student + teacher + parent (never stored in the DB).
+    """
     TR_MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 
     def _blank():
         return {"activities_count": 0, "student_count": 0, "teacher_count": 0, "parent_count": 0, "total_participants": 0}
 
-    def _add(acc_dict, r, sc, tc, pc):
+    def _add(acc_dict, sc, tc, pc):
         acc_dict["activities_count"] += 1
         acc_dict["student_count"] += sc
         acc_dict["teacher_count"] += tc
@@ -1151,22 +1145,22 @@ async def ram_activities_statistics(request: Request):
 
     summary = _blank()
     target_map = {t: _blank() for t in ("genel_hedef", "yerel_hedef", "ozel_hedef", "hedef_disi")}
-    monthly = {}       # key "YYYY-MM" -> agg (+year/month)
-    titles = {}        # title -> agg
-    types = {}         # activity_type -> agg
-    districts = {}     # district_id -> agg
-    institutions = {}  # institution_name -> agg
+    monthly = {}
+    titles = {}
+    types = {}
+    districts = {}
+    institutions = {}
 
     for r in rows:
         sc = r.get("student_count") or 0
         tc = r.get("teacher_count") or 0
         pc = r.get("parent_count") or 0
 
-        _add(summary, r, sc, tc, pc)
+        _add(summary, sc, tc, pc)
 
         tt = r.get("target_type")
         if tt in target_map:
-            _add(target_map[tt], r, sc, tc, pc)
+            _add(target_map[tt], sc, tc, pc)
 
         adate = (r.get("activity_date") or "")[:10]
         if len(adate) >= 7:
@@ -1178,29 +1172,28 @@ async def ram_activities_statistics(request: Request):
                                "month_key": ym,
                                "month_name": TR_MONTHS[mi - 1] if 1 <= mi <= 12 else m,
                                "label": f"{TR_MONTHS[mi - 1]} {y}" if 1 <= mi <= 12 else ym}
-            _add(monthly[ym], r, sc, tc, pc)
+            _add(monthly[ym], sc, tc, pc)
 
         title = r.get("title") or ""
         if title:
             titles.setdefault(title, {**_blank(), "title": title})
-            _add(titles[title], r, sc, tc, pc)
+            _add(titles[title], sc, tc, pc)
 
         atype = r.get("activity_type") or ""
         if atype:
             types.setdefault(atype, {**_blank(), "activity_type": atype})
-            _add(types[atype], r, sc, tc, pc)
+            _add(types[atype], sc, tc, pc)
 
         did = r.get("district_id")
         if did is not None:
             districts.setdefault(did, {**_blank(), "district_id": did})
-            _add(districts[did], r, sc, tc, pc)
+            _add(districts[did], sc, tc, pc)
 
         inst = r.get("institution_name") or ""
         if inst:
             institutions.setdefault(inst, {**_blank(), "institution_name": inst})
-            _add(institutions[inst], r, sc, tc, pc)
+            _add(institutions[inst], sc, tc, pc)
 
-    # Resolve district names.
     dmap = {}
     for d in (client.table("districts").select("id,name").execute().data or []):
         dmap[d["id"]] = d["name"]
@@ -1223,6 +1216,101 @@ async def ram_activities_statistics(request: Request):
         "activity_types": _sort_groups(list(types.values()), "activity_type"),
         "districts": _sort_groups(districts_list, "district_name"),
         "institutions": _sort_groups(list(institutions.values()), "institution_name"),
+        "_dmap": dmap,
+    }
+
+
+@api.get("/ram/activities/statistics")
+async def ram_activities_statistics(request: Request):
+    """Aggregate statistics for the logged-in RAM's own activities only.
+
+    RAM isolation: ram_id resolved from the token; the query is ALWAYS limited
+    to ram_activities.ram_id = acc["ram_id"]. Optional date_from/date_to filter
+    (date_from > date_to -> 400). All metrics come from _compute_ram_statistics.
+    """
+    _uid, acc = _require_ram_ready(request)
+    ram_id = acc["ram_id"]
+
+    qp = request.query_params
+    date_from = (qp.get("date_from") or "").strip()
+    date_to = (qp.get("date_to") or "").strip()
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="Başlangıç tarihi bitiş tarihinden sonra olamaz.")
+
+    client = get_service_client()
+    rows = _fetch_ram_activity_rows(client, ram_id, date_from, date_to)
+    stats = _compute_ram_statistics(rows, client)
+    stats.pop("_dmap", None)
+    return stats
+
+
+@api.get("/ram/activities/report")
+async def ram_activities_report(request: Request):
+    """Data for the RAM report/PDF (summary or detailed). Single source of truth.
+
+    Reuses _compute_ram_statistics so screen and PDF numbers match. RAM isolation
+    enforced from the token. `detailed=true` also returns each activity record
+    (still scoped to ram_id). Returns ram_name and period info for the header.
+    """
+    _uid, acc = _require_ram_ready(request)
+    ram_id = acc["ram_id"]
+
+    qp = request.query_params
+    date_from = (qp.get("date_from") or "").strip()
+    date_to = (qp.get("date_to") or "").strip()
+    detailed = (qp.get("detailed") or "").strip().lower() in ("1", "true", "yes")
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="Başlangıç tarihi bitiş tarihinden sonra olamaz.")
+
+    client = get_service_client()
+    rows = _fetch_ram_activity_rows(client, ram_id, date_from, date_to, full=True)
+    stats = _compute_ram_statistics(rows, client)
+    dmap = stats.pop("_dmap", {})
+
+    # RAM institution name from the authenticated context (never from client).
+    ram_name = None
+    rrows = client.table("rams").select("name").eq("id", ram_id).limit(1).execute().data
+    if rrows:
+        ram_name = rrows[0].get("name")
+
+    dates = sorted([(r.get("activity_date") or "")[:10] for r in rows if r.get("activity_date")])
+    first_date = dates[0] if dates else None
+    last_date = dates[-1] if dates else None
+
+    activities = []
+    if detailed:
+        def _key(r):
+            return ((r.get("activity_date") or ""), (r.get("created_at") or ""))
+        for r in sorted(rows, key=_key):
+            sc = r.get("student_count") or 0
+            tc = r.get("teacher_count") or 0
+            pc = r.get("parent_count") or 0
+            activities.append({
+                "activity_date": r.get("activity_date"),
+                "district_name": dmap.get(r.get("district_id")),
+                "institution_name": r.get("institution_name"),
+                "activity_type": r.get("activity_type"),
+                "title": r.get("title"),
+                "target_type": r.get("target_type"),
+                "student_count": sc,
+                "teacher_count": tc,
+                "parent_count": pc,
+                "total_participants": sc + tc + pc,
+                "note": r.get("note"),
+            })
+
+    return {
+        "ram_name": ram_name,
+        "report_type": "detailed" if detailed else "summary",
+        "period": {
+            "date_from": date_from or None,
+            "date_to": date_to or None,
+            "first_date": first_date,
+            "last_date": last_date,
+            "count": len(rows),
+        },
+        "statistics": stats,
+        "activities": activities,
     }
 
 

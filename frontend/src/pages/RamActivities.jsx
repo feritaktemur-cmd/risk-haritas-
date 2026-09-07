@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, CheckCircle2, ListChecks, ChevronDown, ChevronUp, Inbox, FilterX, Pencil, Trash2, X, BarChart3, Users, GraduationCap, UserCog, UsersRound } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, CheckCircle2, ListChecks, ChevronDown, ChevronUp, Inbox, FilterX, Pencil, Trash2, X, BarChart3, Users, GraduationCap, UserCog, UsersRound, FileDown } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { generateRamReportPdf } from "../lib/ramReportPdf";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -113,6 +114,12 @@ export default function RamActivities() {
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState(null);
   const [statsLoaded, setStatsLoaded] = useState(false);
+
+  // Rapor / PDF state
+  const [reportFilters, setReportFilters] = useState({ date_from: "", date_to: "", report_type: "summary" });
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState(null);
+  const [reportInfo, setReportInfo] = useState(null);
 
   const hasFilters = useMemo(
     () => filters.district_id || filters.target_type || filters.date_from || filters.date_to,
@@ -311,6 +318,38 @@ export default function RamActivities() {
 
   const resetStatFilters = () => setStatFilters({ date_from: "", date_to: "" });
 
+  const generateReport = async () => {
+    if (reportBusy) return;
+    setReportError(null);
+    setReportInfo(null);
+    if (reportFilters.date_from && reportFilters.date_to && reportFilters.date_from > reportFilters.date_to) {
+      setReportError("Başlangıç tarihi bitiş tarihinden sonra olamaz.");
+      return;
+    }
+    setReportBusy(true);
+    const h = await authHeader();
+    if (!h) { navigate("/ram/login", { replace: true }); return; }
+    const params = { detailed: reportFilters.report_type === "detailed" };
+    if (reportFilters.date_from) params.date_from = reportFilters.date_from;
+    if (reportFilters.date_to) params.date_to = reportFilters.date_to;
+    try {
+      const res = await axios.get(`${API}/ram/activities/report`, { headers: h, params });
+      const report = res.data;
+      if (!report.statistics?.summary?.activities_count) {
+        setReportError("Seçilen tarih aralığında raporlanacak çalışma kaydı bulunamadı.");
+        setReportBusy(false);
+        return;
+      }
+      await generateRamReportPdf(report);
+      setReportInfo("PDF raporu oluşturuldu ve indirildi.");
+    } catch (err) {
+      if (err.response?.status === 401) { await supabase.auth.signOut(); navigate("/ram/login", { replace: true }); return; }
+      if (err.response?.status === 403) { navigate("/ram/change-password", { replace: true }); return; }
+      setReportError(err.response?.data?.detail || "PDF raporu oluşturulamadı.");
+    }
+    setReportBusy(false);
+  };
+
   if (!ready) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#0b1120]" data-testid="ramact-loading">
@@ -347,7 +386,7 @@ export default function RamActivities() {
           <button type="button" onClick={() => setTab("add")} data-testid="ramact-tab-add" className={tabCls(tab === "add")}>Çalışma Ekle</button>
           <button type="button" onClick={openRecords} data-testid="ramact-tab-records" className={tabCls(tab === "records")}>Çalışma Kayıtları</button>
           <button type="button" onClick={openStats} data-testid="ramact-tab-stats" className={tabCls(tab === "stats")}>İstatistikler</button>
-          <span className="rounded-full bg-white/[0.04] px-4 py-1.5 font-semibold text-slate-500 ring-1 ring-white/10">Yıl Sonu Raporu · Yakında</span>
+          <button type="button" onClick={() => setTab("reports")} data-testid="ramact-tab-reports" className={tabCls(tab === "reports")}>Raporlar / PDF</button>
         </div>
 
         {tab === "add" && (
@@ -697,6 +736,77 @@ export default function RamActivities() {
                 <StatTable testid="ramact-stat-institutions" heading="Okul/Kurum Bazlı Analiz" firstCol="Okul/Kurum" nameKey="institution_name" rows={stats.institutions} />
               </div>
             ) : null}
+          </div>
+        )}
+
+        {tab === "reports" && (
+          <div data-testid="ramact-reports" className="mx-auto max-w-2xl">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-emerald-500 to-indigo-400 text-white">
+                  <FileDown size={20} />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-white">Raporlar / PDF</h2>
+                  <p className="text-xs text-slate-400">Çalışmalarınızın istatistiksel dökümünü PDF olarak indirin.</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-300">Başlangıç Tarihi</label>
+                  <input type="date" value={reportFilters.date_from} onChange={(e) => setReportFilters((f) => ({ ...f, date_from: e.target.value }))} data-testid="ramact-report-from" className={fieldCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-300">Bitiş Tarihi</label>
+                  <input type="date" value={reportFilters.date_to} onChange={(e) => setReportFilters((f) => ({ ...f, date_to: e.target.value }))} data-testid="ramact-report-to" className={fieldCls} />
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">Tarih girmezseniz tüm çalışma kayıtlarınız rapora dahil edilir.</p>
+
+              <div className="mt-4">
+                <label className="mb-1 block text-sm font-medium text-slate-300">Rapor Türü</label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {[
+                    { value: "summary", title: "Özet Rapor", desc: "Yalnız istatistiksel özet ve analizler." },
+                    { value: "detailed", title: "Ayrıntılı Rapor", desc: "Özet + tüm çalışma kayıtlarının dökümü." },
+                  ].map((o) => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      onClick={() => setReportFilters((f) => ({ ...f, report_type: o.value }))}
+                      data-testid={`ramact-report-type-${o.value}`}
+                      className={`rounded-xl border p-3 text-left transition ${reportFilters.report_type === o.value ? "border-emerald-400/50 bg-emerald-500/10" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"}`}
+                    >
+                      <p className={`text-sm font-bold ${reportFilters.report_type === o.value ? "text-emerald-300" : "text-white"}`}>{o.title}</p>
+                      <p className="mt-0.5 text-xs text-slate-400">{o.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {reportError && (
+                <div data-testid="ramact-report-error" className="mt-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{reportError}</span>
+                </div>
+              )}
+              {reportInfo && (
+                <div data-testid="ramact-report-info" className="mt-4 flex items-start gap-2 rounded-xl bg-emerald-500/10 p-3 text-sm text-emerald-300 ring-1 ring-emerald-400/20">
+                  <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> <span>{reportInfo}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={generateReport}
+                disabled={reportBusy}
+                data-testid="ramact-report-generate"
+                className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:opacity-50"
+              >
+                {reportBusy ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />}
+                {reportBusy ? "PDF Oluşturuluyor…" : "PDF Oluştur / İndir"}
+              </button>
+            </div>
           </div>
         )}
       </main>
