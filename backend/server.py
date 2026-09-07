@@ -822,6 +822,33 @@ async def ram_districts(request: Request):
     return {"districts": rows}
 
 
+def _tr_lower(s: str) -> str:
+    """Turkish-aware lowercase (İ->i, I->ı) then standard lower for the rest."""
+    return s.replace("İ", "i").replace("I", "ı").lower()
+
+
+def _tr_upper(s: str) -> str:
+    """Turkish-aware uppercase (i->İ, ı->I) then standard upper for the rest."""
+    return s.replace("i", "İ").replace("ı", "I").upper()
+
+
+def _normalize_title_field(value) -> str:
+    """Trim, collapse inner whitespace and Turkish-aware Title Case a value.
+
+    Used for `title` and `activity_type` so casing variants collapse to a single
+    canonical form in the DB (e.g. 'AKRAN ZORBALIĞI' -> 'Akran Zorbalığı',
+    'SEMİNER' -> 'Seminer'). NOT applied to institution_name or note.
+    """
+    s = " ".join(str(value or "").split())
+    out = []
+    for w in s.split(" "):
+        if not w:
+            continue
+        low = _tr_lower(w)
+        out.append(_tr_upper(low[0]) + low[1:])
+    return " ".join(out)
+
+
 def _validate_ram_activity_payload(body, client):
     """Shared validation for RAM activity create/update.
 
@@ -832,8 +859,8 @@ def _validate_ram_activity_payload(body, client):
     activity_date = (body.get("activity_date") or "").strip()
     district_id = body.get("district_id")
     institution_name = str(body.get("institution_name") or "").strip()
-    activity_type = str(body.get("activity_type") or "").strip()
-    title = str(body.get("title") or "").strip()
+    activity_type = _normalize_title_field(body.get("activity_type"))
+    title = _normalize_title_field(body.get("title"))
     target_type = str(body.get("target_type") or "").strip()
     note = str(body.get("note") or "").strip()
 
