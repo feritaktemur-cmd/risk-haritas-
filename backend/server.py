@@ -593,7 +593,11 @@ async def ram_login(request: Request):
 
 @api.get("/admin/rams")
 async def admin_list_rams(request: Request):
-    """List RAM institutions. General Admin only. Read-only."""
+    """List RAM institutions. General Admin only. Read-only.
+
+    Adds a `has_account` boolean per RAM (whether a ram_accounts row exists)
+    so the admin UI can decide when to show 'Create account'.
+    """
     _require_general_admin(request)
     client = get_service_client()
     rams = _fetch_all(
@@ -602,6 +606,10 @@ async def admin_list_rams(request: Request):
         .order("name")
         .range(a, b)
     )
+    acc_rows = _fetch_all(lambda a, b: client.table("ram_accounts").select("ram_id").range(a, b))
+    with_account = {r["ram_id"] for r in acc_rows}
+    for r in rams:
+        r["has_account"] = r["id"] in with_account
     return {"rams": rams}
 
 

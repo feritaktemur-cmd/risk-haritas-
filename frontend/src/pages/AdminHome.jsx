@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { ShieldCheck, Loader2, LogOut, Users, FileSpreadsheet, BarChart3 } from "lucide-react";
+import { ShieldCheck, Loader2, LogOut, Users, FileSpreadsheet, BarChart3, Building2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -127,6 +127,22 @@ export default function AdminHome() {
             <span>
               <span className="block text-sm font-bold text-white">RAM Risk Haritası</span>
               <span className="block text-xs text-slate-400">Okulların RAM'a gönderdiği Risk Haritası sonuçlarını görüntüleyin.</span>
+            </span>
+          </button>
+        </div>
+
+        <div className="mt-4">
+          <button
+            onClick={() => navigate("/admin/rams")}
+            data-testid="nav-ram-management"
+            className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-4 text-left transition hover:border-indigo-400/40 hover:bg-white/[0.06]"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-500/15 text-indigo-300">
+              <Building2 size={20} />
+            </span>
+            <span>
+              <span className="block text-sm font-bold text-white">RAM Yönetimi</span>
+              <span className="block text-xs text-slate-400">RAM kurumlarını oluşturun ve kurumsal giriş hesaplarını tanımlayın.</span>
             </span>
           </button>
         </div>
