@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Building2, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Building2, Loader2, AlertTriangle } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
@@ -13,7 +13,6 @@ export default function RamLogin() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null); // { username, must_change_password }
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -34,9 +33,7 @@ export default function RamLogin() {
         navigate("/ram/change-password", { replace: true });
         return;
       }
-      // /ram/modules does not exist yet — avoid routing to a broken page;
-      // confirm success here instead.
-      setSuccess({ username: data.username, must_change_password: false });
+      navigate("/ram/modules", { replace: true });
     } catch (err) {
       setError(err.response?.data?.detail || "Kullanıcı adı veya şifre hatalı.");
     }
@@ -54,65 +51,48 @@ export default function RamLogin() {
           <h1 className="mt-1 text-2xl font-extrabold text-white">RAM Girişi</h1>
         </div>
 
-        {success ? (
-          <div data-testid="ram-login-success" className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center backdrop-blur">
-            <div className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-full bg-emerald-500/15 text-emerald-300">
-              <CheckCircle2 size={22} />
+        <form onSubmit={onSubmit} data-testid="ram-login-form" className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur">
+          <label className="mb-1 block text-sm font-medium text-slate-300">Kullanıcı adı</label>
+          <input
+            type="text"
+            required
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            data-testid="ram-username-input"
+            autoCapitalize="none"
+            autoCorrect="off"
+            className="mb-4 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-white outline-none transition focus:border-emerald-400/60"
+            placeholder="ornekram"
+          />
+
+          <label className="mb-1 block text-sm font-medium text-slate-300">Şifre</label>
+          <input
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            data-testid="ram-password-input"
+            className="mb-5 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-white outline-none transition focus:border-emerald-400/60"
+            placeholder="••••••••"
+          />
+
+          {error && (
+            <div data-testid="ram-login-error" className="mb-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
             </div>
-            <p className="text-base font-bold text-white">Giriş başarılı</p>
-            <p className="mt-1 text-sm text-slate-400">
-              Hoş geldiniz, <span className="font-semibold text-slate-200">{success.username}</span>.
-            </p>
-            <p className="mt-4 text-sm text-slate-400">
-              {success.must_change_password
-                ? "İlk girişte şifre değişikliği gereklidir. Şifre değiştirme ekranı yakında eklenecektir."
-                : "RAM Çalışmaları modül ekranı yakında eklenecektir."}
-            </p>
-          </div>
-        ) : (
-          <form onSubmit={onSubmit} data-testid="ram-login-form" className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur">
-            <label className="mb-1 block text-sm font-medium text-slate-300">Kullanıcı adı</label>
-            <input
-              type="text"
-              required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              data-testid="ram-username-input"
-              autoCapitalize="none"
-              autoCorrect="off"
-              className="mb-4 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-white outline-none transition focus:border-emerald-400/60"
-              placeholder="ornekram"
-            />
+          )}
 
-            <label className="mb-1 block text-sm font-medium text-slate-300">Şifre</label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              data-testid="ram-password-input"
-              className="mb-5 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm text-white outline-none transition focus:border-emerald-400/60"
-              placeholder="••••••••"
-            />
-
-            {error && (
-              <div data-testid="ram-login-error" className="mb-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
-                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              data-testid="ram-login-submit"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : null}
-              Giriş Yap
-            </button>
-          </form>
-        )}
+          <button
+            type="submit"
+            disabled={loading}
+            data-testid="ram-login-submit"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? <Loader2 size={16} className="animate-spin" /> : null}
+            Giriş Yap
+          </button>
+        </form>
         <CorporateFooter className="mt-8" />
       </div>
     </div>
