@@ -591,6 +591,48 @@ async def ram_login(request: Request):
     }
 
 
+@api.get("/admin/rams")
+async def admin_list_rams(request: Request):
+    """List RAM institutions. General Admin only. Read-only."""
+    _require_general_admin(request)
+    client = get_service_client()
+    rams = _fetch_all(
+        lambda a, b: client.table("rams")
+        .select("id,name,is_active,created_at")
+        .order("name")
+        .range(a, b)
+    )
+    return {"rams": rams}
+
+
+@api.post("/admin/rams")
+async def admin_create_ram(request: Request):
+    """Create a RAM institution. General Admin only.
+
+    Only the RAM name is accepted (trimmed, non-empty). is_active/id/created_at
+    are DB-managed. Case-insensitive duplicate names (ux_rams_name_ci) are
+    reported as a clear 409.
+    """
+    _require_general_admin(request)
+    body = await request.json()
+    name = str((body or {}).get("name", "")).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="RAM adı boş olamaz.")
+
+    client = get_service_client()
+    try:
+        resp = client.table("rams").insert({"name": name}).execute()
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "23505" in msg or "duplicate" in msg.lower() or "ux_rams_name_ci" in msg:
+            raise HTTPException(status_code=409, detail="Bu isimde bir RAM kurumu zaten mevcut.")
+        logger.exception("RAM create failed")
+        raise HTTPException(status_code=500, detail="RAM kurumu oluşturulurken hata oluştu.")
+
+    row = (resp.data or [None])[0]
+    return {"ram": row}
+
+
 @api.get("/school/session")
 async def school_session(request: Request):
     """Session info for routing (works even if must_change_password=true)."""
