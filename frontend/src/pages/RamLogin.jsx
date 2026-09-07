@@ -30,9 +30,13 @@ export default function RamLogin() {
         access_token: data.access_token,
         refresh_token: data.refresh_token,
       });
-      // /ram/modules and /ram/change-password do not exist yet — avoid routing
-      // to a broken page; confirm success here instead.
-      setSuccess({ username: data.username, must_change_password: !!data.must_change_password });
+      if (data.must_change_password) {
+        navigate("/ram/change-password", { replace: true });
+        return;
+      }
+      // /ram/modules does not exist yet — avoid routing to a broken page;
+      // confirm success here instead.
+      setSuccess({ username: data.username, must_change_password: false });
     } catch (err) {
       setError(err.response?.data?.detail || "Kullanıcı adı veya şifre hatalı.");
     }

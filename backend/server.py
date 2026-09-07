@@ -776,6 +776,40 @@ async def school_change_password(request: Request):
     return {"ok": True}
 
 
+@api.post("/ram/change-password")
+async def ram_change_password(request: Request):
+    """Change password for the logged-in active RAM account (server-side).
+
+    RAM counterpart of /school/change-password. Uses _resolve_ram_by_token
+    (NOT _require_ram_ready) so an account with must_change_password=true can
+    reach it. ram_id / auth_user_id come only from the resolved token. Same
+    validation, same Supabase Auth update method, same response shape.
+    """
+    auth_user_id, acc = _resolve_ram_by_token(request)
+    body = await request.json()
+    new_password = (body or {}).get("new_password", "")
+    if not _valid_school_password(new_password):
+        raise HTTPException(status_code=400, detail="Şifreniz en az 8 karakter olmalı ve en az bir harf ile bir rakam içermelidir.")
+
+    client = get_service_client()
+    # Update password in Supabase Auth (admin API, service key).
+    try:
+        client.auth.admin.update_user_by_id(auth_user_id, {"password": new_password})
+    except Exception as e:  # noqa: BLE001
+        logger.exception("RAM password update failed")
+        raise HTTPException(status_code=500, detail="Şifre güncellenemedi.")
+
+    # Clear the mandatory-change flag (mirrors school; password_reset_at is
+    # reserved for admin-initiated resets and is not touched here).
+    try:
+        client.table("ram_accounts").update({"must_change_password": False}).eq("id", acc["id"]).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("RAM must_change_password update failed")
+        raise HTTPException(status_code=500, detail="Şifre güncellendi ancak durum güncellenemedi. Lütfen tekrar giriş yapın.")
+
+    return {"ok": True}
+
+
 def _require_school_ready(request: Request):
     """Active school account that has completed mandatory password change.
 

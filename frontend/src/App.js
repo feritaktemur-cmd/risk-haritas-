@@ -13,6 +13,7 @@ import AdminAggregateRiskMap from "./pages/AdminAggregateRiskMap";
 import AdminTracking from "./pages/AdminTracking";
 import AdminRams from "./pages/AdminRams";
 import RamLogin from "./pages/RamLogin";
+import RamChangePassword from "./pages/RamChangePassword";
 import SchoolLogin from "./pages/SchoolLogin";
 import Modules from "./pages/Modules";
 import SchoolChangePassword from "./pages/SchoolChangePassword";
@@ -84,6 +85,7 @@ export default function App() {
         <Route path="/admin/risk-map/tracking" element={<AdminTracking />} />
         <Route path="/admin/rams" element={<AdminRams />} />
         <Route path="/ram/login" element={<RamLogin />} />
+        <Route path="/ram/change-password" element={<RamChangePassword />} />
         <Route path="/admin/risk-map/submissions/:submissionId" element={<AdminSubmissionDetail />} />
         <Route path="/school/login" element={<SchoolLogin />} />
         <Route path="/school/change-password" element={<SchoolChangePassword />} />
