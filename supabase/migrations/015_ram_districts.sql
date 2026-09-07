@@ -15,12 +15,12 @@
 --   * rams.id       = UUID          (Migration 014)
 --   * districts.id  = SMALLINT       (Migration 002)
 --
--- Does NOT: seed rows (see the commented, name-lookup template AFTER COMMIT —
---           it is NOT executed by this migration), add RLS policies, alter ANY
---           existing table (schools / districts / school_submissions / snapshot
---           tables / rams / ram_accounts / ram_activities stay untouched),
---           touch existing functions/triggers/policies. No secret / service_role
---           values are stored here.
+-- Does NOT: add RLS policies, alter ANY existing table (schools / districts /
+--           school_submissions / snapshot tables / rams / ram_accounts /
+--           ram_activities stay untouched), touch existing functions/triggers/
+--           policies. No secret / service_role values are stored here.
+-- Includes: a district->RAM seed (15 districts -> 6 RAMs) resolved by real
+--           names (no hard-coded IDs) with a strict verify-or-rollback guard.
 -- Result: ram_districts RLS = ON, policy count = 0.
 -- =====================================================================
 
@@ -63,56 +63,73 @@ ALTER TABLE public.ram_districts ENABLE ROW LEVEL SECURITY;
 COMMIT;
 
 -- =====================================================================
--- SEED TEMPLATE — *** NOT EXECUTED BY THIS MIGRATION ***
+-- SEED: district -> RAM mapping (15 districts -> 6 RAMs)
 -- ---------------------------------------------------------------------
--- The 5 RAMs below (Yüreğir / Ceyhan / Seyhan / Sarıçam / Kozan) DO NOT yet
--- exist in the live `rams` table. Only ONE RAM currently exists:
---     'Çukurova Rehberlik ve Araştırma Merkezi'
--- The task's short labels ("Çukurova RAM", "Kozan RAM", ...) are NOT the real
--- DB names. To avoid creating WRONG links, no seed is executed here.
+-- All 6 RAMs now exist in public.rams. IDs are NOT hard-coded: they are
+-- resolved by joining on the REAL rams.name (verified from the live DB) and
+-- districts.name (all 15 verified present). A typo / missing name produces NO
+-- row (JOIN drops it) instead of a wrong link, and ON CONFLICT (district_id)
+-- DO NOTHING keeps it re-runnable while UNIQUE(district_id) blocks any
+-- accidental double mapping. A strict verification block at the end forces a
+-- ROLLBACK (via an exception) unless the result is EXACTLY 15 links across
+-- 15 distinct districts and 6 distinct RAMs.
 --
--- HOW TO SEED SAFELY (run manually ONLY AFTER all 6 RAMs exist with their real
--- names, and after you replace each '<<< REAL RAM NAME >>>' with the exact
--- value from public.rams.name):
---
---   * The INSERT ... SELECT joins by NAME, so a typo / missing name simply
---     produces NO row instead of a wrong link.
---   * ON CONFLICT (district_id) DO NOTHING keeps it re-runnable and lets
---     UNIQUE(district_id) block accidental double mapping.
---   * The 15 district names below match the live `districts` table exactly.
---
--- BEGIN;
---
--- INSERT INTO public.ram_districts (ram_id, district_id)
--- SELECT r.id, d.id
--- FROM (VALUES
---     -- (RAM real name from public.rams.name , district name from districts)
---     ('<<< YÜREĞİR RAM REAL NAME >>>'                , 'Yüreğir'),
---     ('<<< YÜREĞİR RAM REAL NAME >>>'                , 'Karataş'),
---     ('<<< CEYHAN RAM REAL NAME >>>'                 , 'Ceyhan'),
---     ('<<< CEYHAN RAM REAL NAME >>>'                 , 'Yumurtalık'),
---     ('<<< SEYHAN RAM REAL NAME >>>'                 , 'Seyhan'),
---     ('<<< SARIÇAM RAM REAL NAME >>>'                , 'Sarıçam'),
---     ('<<< KOZAN RAM REAL NAME >>>'                  , 'Kozan'),
---     ('<<< KOZAN RAM REAL NAME >>>'                  , 'Tufanbeyli'),
---     ('<<< KOZAN RAM REAL NAME >>>'                  , 'Saimbeyli'),
---     ('<<< KOZAN RAM REAL NAME >>>'                  , 'Feke'),
---     ('<<< KOZAN RAM REAL NAME >>>'                  , 'Aladağ'),
---     ('<<< KOZAN RAM REAL NAME >>>'                  , 'İmamoğlu'),
---     ('Çukurova Rehberlik ve Araştırma Merkezi'      , 'Çukurova'),
---     ('Çukurova Rehberlik ve Araştırma Merkezi'      , 'Pozantı'),
---     ('Çukurova Rehberlik ve Araştırma Merkezi'      , 'Karaisalı')
--- ) AS m(ram_name, district_name)
--- JOIN public.rams      r ON lower(r.name) = lower(m.ram_name)
--- JOIN public.districts d ON d.name = m.district_name
--- ON CONFLICT (district_id) DO NOTHING;
---
--- -- Verification: expect 15 mapped districts and 0 unmapped once all 6 RAMs
--- -- exist and names are correct.
--- -- SELECT count(*) AS mapped FROM public.ram_districts;
--- -- SELECT d.name FROM public.districts d
--- --   LEFT JOIN public.ram_districts rd ON rd.district_id = d.id
--- --   WHERE rd.id IS NULL ORDER BY d.name;   -- should return no rows
---
--- COMMIT;
+-- Verified real RAM names (public.rams.name):
+--   Yüreğir Rehberlik ve Araştırma Merkezi
+--   Ceyhan  Rehberlik ve Araştırma Merkezi
+--   Seyhan  Rehberlik ve Araştırma Merkezi
+--   Sarıçam Rehberlik ve Araştırma Merkezi
+--   Kozan   Rehberlik ve Araştırma Merkezi
+--   Çukurova Rehberlik ve Araştırma Merkezi
 -- =====================================================================
+
+BEGIN;
+
+INSERT INTO public.ram_districts (ram_id, district_id)
+SELECT r.id, d.id
+FROM (VALUES
+    -- (real RAM name from public.rams.name          , district name)
+    ('Yüreğir Rehberlik ve Araştırma Merkezi'         , 'Yüreğir'),
+    ('Yüreğir Rehberlik ve Araştırma Merkezi'         , 'Karataş'),
+    ('Ceyhan Rehberlik ve Araştırma Merkezi'          , 'Ceyhan'),
+    ('Ceyhan Rehberlik ve Araştırma Merkezi'          , 'Yumurtalık'),
+    ('Seyhan Rehberlik ve Araştırma Merkezi'          , 'Seyhan'),
+    ('Sarıçam Rehberlik ve Araştırma Merkezi'         , 'Sarıçam'),
+    ('Kozan Rehberlik ve Araştırma Merkezi'           , 'Kozan'),
+    ('Kozan Rehberlik ve Araştırma Merkezi'           , 'Tufanbeyli'),
+    ('Kozan Rehberlik ve Araştırma Merkezi'           , 'Saimbeyli'),
+    ('Kozan Rehberlik ve Araştırma Merkezi'           , 'Feke'),
+    ('Kozan Rehberlik ve Araştırma Merkezi'           , 'Aladağ'),
+    ('Kozan Rehberlik ve Araştırma Merkezi'           , 'İmamoğlu'),
+    ('Çukurova Rehberlik ve Araştırma Merkezi'        , 'Çukurova'),
+    ('Çukurova Rehberlik ve Araştırma Merkezi'        , 'Pozantı'),
+    ('Çukurova Rehberlik ve Araştırma Merkezi'        , 'Karaisalı')
+) AS m(ram_name, district_name)
+JOIN public.rams      r ON lower(r.name) = lower(m.ram_name)
+JOIN public.districts d ON d.name = m.district_name
+ON CONFLICT (district_id) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Strict verification: exactly 15 links, 15 distinct districts, 6 distinct
+-- RAMs. Any deviation raises an exception -> the whole seed transaction rolls
+-- back, so a wrong/partial mapping can NEVER silently look successful.
+-- ---------------------------------------------------------------------
+DO $$
+DECLARE
+    v_total    INTEGER;
+    v_district INTEGER;
+    v_ram      INTEGER;
+BEGIN
+    SELECT count(*), count(DISTINCT district_id), count(DISTINCT ram_id)
+      INTO v_total, v_district, v_ram
+      FROM public.ram_districts;
+
+    IF v_total <> 15 OR v_district <> 15 OR v_ram <> 6 THEN
+        RAISE EXCEPTION
+            'ram_districts seed dogrulamasi basarisiz: toplam=% (beklenen 15), farkli ilce=% (beklenen 15), farkli RAM=% (beklenen 6). Islem geri alindi.',
+            v_total, v_district, v_ram;
+    END IF;
+END $$;
+
+COMMIT;
+
