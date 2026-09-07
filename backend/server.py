@@ -55,6 +55,50 @@ def _resolve_school_by_token(request: Request):
     return user.id, acc
 
 
+def _resolve_ram_by_token(request: Request):
+    """Validate token -> active ram_accounts row. Raises HTTPException.
+
+    RAM counterpart of _resolve_school_by_token. Returns (auth_user_id,
+    account_row). The RAM institution id is resolved ONLY here (token ->
+    ram_accounts), never from request body/query/path. Generic messages.
+    """
+    token = _get_bearer_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Oturum bulunamadı.")
+    client = get_service_client()
+    try:
+        user = getattr(client.auth.get_user(token), "user", None)
+    except Exception:  # noqa: BLE001
+        user = None
+    if user is None or not getattr(user, "id", None):
+        raise HTTPException(status_code=401, detail="Oturum geçersiz.")
+    rows = (
+        client.table("ram_accounts")
+        .select("id,ram_id,username,is_active,must_change_password")
+        .eq("auth_user_id", user.id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    acc = rows[0] if rows else None
+    if acc is None or not acc.get("is_active"):
+        raise HTTPException(status_code=403, detail="Bu hesapla giriş yapılamıyor. Lütfen Genel Admin ile iletişime geçin.")
+    return user.id, acc
+
+
+def _require_ram_ready(request: Request):
+    """Active RAM account that has completed mandatory password change.
+
+    Returns (auth_user_id, account_row). Raises 403 'password_change_required'
+    if must_change_password is still true. The future RAM change-password
+    endpoint must use _resolve_ram_by_token directly (bypassing this gate).
+    """
+    auth_user_id, acc = _resolve_ram_by_token(request)
+    if acc.get("must_change_password"):
+        raise HTTPException(status_code=403, detail="password_change_required")
+    return auth_user_id, acc
+
+
 def _school_display(client, school_id):
     rows = client.table("schools").select("name,district:districts(name)").eq("id", school_id).limit(1).execute().data
     if not rows:
