@@ -15,6 +15,7 @@ import AdminRams from "./pages/AdminRams";
 import RamLogin from "./pages/RamLogin";
 import RamChangePassword from "./pages/RamChangePassword";
 import RamModules from "./pages/RamModules";
+import RamActivities from "./pages/RamActivities";
 import SchoolLogin from "./pages/SchoolLogin";
 import Modules from "./pages/Modules";
 import SchoolChangePassword from "./pages/SchoolChangePassword";
@@ -88,6 +89,7 @@ export default function App() {
         <Route path="/ram/login" element={<RamLogin />} />
         <Route path="/ram/change-password" element={<RamChangePassword />} />
         <Route path="/ram/modules" element={<RamModules />} />
+        <Route path="/ram/activities" element={<RamActivities />} />
         <Route path="/admin/risk-map/submissions/:submissionId" element={<AdminSubmissionDetail />} />
         <Route path="/school/login" element={<SchoolLogin />} />
         <Route path="/school/change-password" element={<SchoolChangePassword />} />

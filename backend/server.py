@@ -810,6 +810,101 @@ async def ram_change_password(request: Request):
     return {"ok": True}
 
 
+@api.get("/ram/districts")
+async def ram_districts(request: Request):
+    """Active districts for the RAM activity form. RAM account only.
+
+    No RAM<->district mapping/filtering: a RAM may pick any district.
+    """
+    _require_ram_ready(request)
+    client = get_service_client()
+    rows = client.table("districts").select("id,name").eq("is_active", True).order("name").execute().data
+    return {"districts": rows}
+
+
+@api.post("/ram/activities")
+async def ram_create_activity(request: Request):
+    """Create a single RAM activity record for the logged-in RAM.
+
+    ram_id is resolved ONLY from the token (never from the client). Requires an
+    active RAM account that has completed the mandatory password change.
+    total_participants is NOT stored; it is returned computed for convenience.
+    """
+    _uid, acc = _require_ram_ready(request)
+    ram_id = acc["ram_id"]
+    body = await request.json() or {}
+
+    activity_date = (body.get("activity_date") or "").strip()
+    district_id = body.get("district_id")
+    institution_name = str(body.get("institution_name") or "").strip()
+    activity_type = str(body.get("activity_type") or "").strip()
+    title = str(body.get("title") or "").strip()
+    target_type = str(body.get("target_type") or "").strip()
+    note = str(body.get("note") or "").strip()
+
+    if not activity_date:
+        raise HTTPException(status_code=400, detail="Çalışma tarihi zorunludur.")
+    if district_id is None or str(district_id) == "":
+        raise HTTPException(status_code=400, detail="İlçe seçimi zorunludur.")
+    if not institution_name:
+        raise HTTPException(status_code=400, detail="Çalışmanın yapıldığı okul/kurum zorunludur.")
+    if not activity_type:
+        raise HTTPException(status_code=400, detail="Çalışma türü zorunludur.")
+    if not title:
+        raise HTTPException(status_code=400, detail="Konu / çalışma başlığı zorunludur.")
+    if target_type not in ("genel_hedef", "yerel_hedef", "ozel_hedef", "hedef_disi"):
+        raise HTTPException(status_code=400, detail="Geçersiz hedef türü.")
+
+    def _nonneg_int(v, label):
+        try:
+            n = int(v if v not in (None, "") else 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"{label} geçerli bir sayı olmalıdır.")
+        if n < 0:
+            raise HTTPException(status_code=400, detail=f"{label} negatif olamaz.")
+        return n
+
+    student_count = _nonneg_int(body.get("student_count"), "Öğrenci sayısı")
+    teacher_count = _nonneg_int(body.get("teacher_count"), "Öğretmen sayısı")
+    parent_count = _nonneg_int(body.get("parent_count"), "Veli sayısı")
+
+    try:
+        district_id = int(district_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Geçersiz ilçe.")
+
+    client = get_service_client()
+    # District must exist (no RAM<->district authorization).
+    drows = client.table("districts").select("id").eq("id", district_id).limit(1).execute().data
+    if not drows:
+        raise HTTPException(status_code=400, detail="Seçilen ilçe bulunamadı.")
+
+    to_insert = {
+        "ram_id": ram_id,
+        "activity_date": activity_date,
+        "district_id": district_id,
+        "institution_name": institution_name,
+        "activity_type": activity_type,
+        "title": title,
+        "target_type": target_type,
+        "student_count": student_count,
+        "teacher_count": teacher_count,
+        "parent_count": parent_count,
+        "note": note or None,
+    }
+    try:
+        resp = client.table("ram_activities").insert(to_insert).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("RAM activity insert failed")
+        raise HTTPException(status_code=500, detail="Çalışma kaydı oluşturulamadı.")
+
+    row = (resp.data or [None])[0] or {}
+    total = student_count + teacher_count + parent_count
+    if row:
+        row["total_participants"] = total
+    return {"activity": row, "total_participants": total}
+
+
 def _require_school_ready(request: Request):
     """Active school account that has completed mandatory password change.
 

@@ -4,8 +4,8 @@ import { Loader2, LogOut, Building2, ClipboardList } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
-// /ram/activities is not built yet -> keep the card visible but disabled.
-const ACTIVITIES_READY = false;
+// /ram/activities is now available.
+const ACTIVITIES_READY = true;
 
 export default function RamModules() {
   const navigate = useNavigate();
