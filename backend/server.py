@@ -633,6 +633,90 @@ async def admin_create_ram(request: Request):
     return {"ram": row}
 
 
+@api.post("/admin/ram-accounts")
+async def admin_create_ram_account(request: Request):
+    """Create the single institutional login account for a RAM.
+
+    General Admin only. Client sends ONLY ram_id. Username + temp password are
+    generated server-side (reusing the school-account helpers). Temp password
+    is returned exactly once and never persisted in app tables. On failure
+    after Auth user creation, the orphan Auth user is cleaned up.
+    """
+    _require_general_admin(request)
+    body = await request.json()
+    ram_id = (body or {}).get("ram_id")
+    if not ram_id:
+        raise HTTPException(status_code=400, detail="RAM seçilmedi.")
+
+    client = get_service_client()
+
+    # 1) RAM must exist and be active.
+    rrows = client.table("rams").select("id,name,is_active").eq("id", ram_id).limit(1).execute().data
+    if not rrows:
+        raise HTTPException(status_code=404, detail="RAM kurumu bulunamadı.")
+    ram = rrows[0]
+    if not ram.get("is_active"):
+        raise HTTPException(status_code=409, detail="Pasif RAM kurumu için hesap oluşturulamaz.")
+    ram_name = ram["name"]
+
+    # 2) One account per RAM.
+    existing_for_ram = client.table("ram_accounts").select("id").eq("ram_id", ram_id).limit(1).execute().data
+    if existing_for_ram:
+        raise HTTPException(status_code=409, detail="Bu RAM kurumunun zaten bir hesabı var.")
+
+    # 3) Globally-unique (case-insensitive) username across ram + school
+    #    accounts, so the derived synthetic Auth email cannot collide.
+    ram_usernames = _fetch_all(lambda a, b: client.table("ram_accounts").select("username").range(a, b))
+    school_usernames = _fetch_all(lambda a, b: client.table("school_accounts").select("username").range(a, b))
+    existing_lower = {r["username"].lower() for r in ram_usernames} | {r["username"].lower() for r in school_usernames}
+    username = generate_username(ram_name, "", existing_lower)
+
+    # 4) Strong temp password + synthetic emailless identity.
+    temp_password = generate_temp_password()
+    synth_email = synth_email_for(username)
+
+    # 5) Create Auth user.
+    try:
+        created = client.auth.admin.create_user({
+            "email": synth_email,
+            "password": temp_password,
+            "email_confirm": True,
+            "user_metadata": {"username": username, "ram_id": ram_id, "kind": "ram"},
+        })
+        auth_user = getattr(created, "user", None)
+        auth_user_id = getattr(auth_user, "id", None)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("RAM Auth user creation failed")
+        raise HTTPException(status_code=500, detail=f"Auth kullanıcısı oluşturulamadı: {e}")
+    if not auth_user_id:
+        raise HTTPException(status_code=500, detail="Auth kullanıcısı oluşturulamadı.")
+
+    # 6) Insert ram_accounts row; on failure, clean up the Auth user.
+    try:
+        client.table("ram_accounts").insert({
+            "ram_id": ram_id,
+            "auth_user_id": auth_user_id,
+            "username": username,
+            "is_active": True,
+            "must_change_password": True,
+        }).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("ram_accounts insert failed; rolling back Auth user")
+        try:
+            client.auth.admin.delete_user(auth_user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Auth user cleanup failed (orphan risk)")
+        raise HTTPException(status_code=500, detail=f"Hesap kaydı oluşturulamadı, işlem geri alındı: {e}")
+
+    # 7) Return credentials ONCE (password never persisted in app tables).
+    return {
+        "ram_id": ram_id,
+        "username": username,
+        "temporary_password": temp_password,
+        "must_change_password": True,
+    }
+
+
 @api.get("/school/session")
 async def school_session(request: Request):
     """Session info for routing (works even if must_change_password=true)."""
