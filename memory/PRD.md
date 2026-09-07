@@ -77,7 +77,15 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
   ram_id) kontrolü, başka RAM kaydına güvenli 404. POST/PUT ortak validasyon helper'ı
   (_validate_ram_activity_payload). Frontend: düzenleme modalı + silme onay modalı,
   başarı sonrası mevcut filtreler korunarak liste yeniden çekilir.
-- Sonraki: İstatistikler ve Yıl Sonu PDF (P1); Genel Admin RAM aktif/pasif & şifre sıfırlama (P2).
+- Serbest metin standardizasyonu: TAMAM (Haziran 2026). title ve activity_type için
+  Türkçe-duyarlı Başlık Biçimi normalizasyonu (_normalize_title_field + _tr_lower/_tr_upper).
+  institution_name/note dokunulmaz. Yalnız yeni/düzenlenen kayıtlar; toplu güncelleme yok.
+- Aşama 4 İstatistikler: TAMAM (Haziran 2026). GET /api/ram/activities/statistics;
+  _require_ram_ready + ram_id izolasyonu, tarih filtresi (date_from/date_to, ters aralıkta 400).
+  Backend aggregate: summary, target_types (4'ü de), monthly (yıl+ay), titles, activity_types,
+  districts (ad çözümlü), institutions (exact). Frontend İstatistikler sekmesi: 5 özet kartı,
+  hedef türü barları, aylık barlar, 4 tablo. Yıl Sonu Raporu hâlâ "Yakında".
+- Sonraki: Yıl Sonu PDF (P1); Genel Admin RAM aktif/pasif & şifre sıfırlama (P2).
 
 ## Backlog / Sonraki olası görevler
 - RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, CheckCircle2, ListChecks, ChevronDown, ChevronUp, Inbox, FilterX, Pencil, Trash2, X } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, CheckCircle2, ListChecks, ChevronDown, ChevronUp, Inbox, FilterX, Pencil, Trash2, X, BarChart3, Users, GraduationCap, UserCog, UsersRound } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -38,6 +38,42 @@ const EMPTY_FILTERS = { district_id: "", target_type: "", date_from: "", date_to
 
 const fieldCls = "w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none transition focus:border-emerald-400/60 placeholder:text-slate-500";
 
+const StatTable = ({ testid, heading, firstCol, nameKey, rows }) => (
+  <section>
+    <h2 className="mb-3 text-base font-bold text-white">{heading}</h2>
+    {rows.length === 0 ? (
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">Kayıt yok.</div>
+    ) : (
+      <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.03]">
+        <table data-testid={testid} className="w-full min-w-[560px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-white/10 text-xs uppercase tracking-wide text-slate-500">
+              <th className="px-4 py-3 font-semibold">{firstCol}</th>
+              <th className="px-3 py-3 text-right font-semibold">Çalışma</th>
+              <th className="px-3 py-3 text-right font-semibold">Öğrenci</th>
+              <th className="px-3 py-3 text-right font-semibold">Öğretmen</th>
+              <th className="px-3 py-3 text-right font-semibold">Veli</th>
+              <th className="px-4 py-3 text-right font-semibold">Toplam</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-b border-white/5 last:border-0">
+                <td className="px-4 py-2.5 font-medium text-white">{r[nameKey] || "—"}</td>
+                <td className="px-3 py-2.5 text-right text-slate-300">{r.activities_count}</td>
+                <td className="px-3 py-2.5 text-right text-slate-300">{r.student_count}</td>
+                <td className="px-3 py-2.5 text-right text-slate-300">{r.teacher_count}</td>
+                <td className="px-3 py-2.5 text-right text-slate-300">{r.parent_count}</td>
+                <td className="px-4 py-2.5 text-right font-bold text-emerald-300">{r.total_participants}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </section>
+);
+
 export default function RamActivities() {
   const navigate = useNavigate();
   const [ready, setReady] = useState(false);
@@ -70,6 +106,13 @@ export default function RamActivities() {
   const [deleteError, setDeleteError] = useState(null);
 
   const [listSuccess, setListSuccess] = useState(null);
+
+  // İstatistik state
+  const [statFilters, setStatFilters] = useState({ date_from: "", date_to: "" });
+  const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState(null);
+  const [statsLoaded, setStatsLoaded] = useState(false);
 
   const hasFilters = useMemo(
     () => filters.district_id || filters.target_type || filters.date_from || filters.date_to,
@@ -236,6 +279,38 @@ export default function RamActivities() {
     setSaving(false);
   };
 
+  const loadStats = useCallback(async () => {
+    setStatsError(null);
+    setStatsLoading(true);
+    const h = await authHeader();
+    if (!h) { navigate("/ram/login", { replace: true }); return; }
+    if (statFilters.date_from && statFilters.date_to && statFilters.date_from > statFilters.date_to) {
+      setStatsError("Başlangıç tarihi bitiş tarihinden sonra olamaz.");
+      setStatsLoading(false);
+      return;
+    }
+    const params = {};
+    if (statFilters.date_from) params.date_from = statFilters.date_from;
+    if (statFilters.date_to) params.date_to = statFilters.date_to;
+    try {
+      const res = await axios.get(`${API}/ram/activities/statistics`, { headers: h, params });
+      setStats(res.data);
+      setStatsLoaded(true);
+    } catch (err) {
+      if (err.response?.status === 401) { await supabase.auth.signOut(); navigate("/ram/login", { replace: true }); return; }
+      if (err.response?.status === 403) { navigate("/ram/change-password", { replace: true }); return; }
+      setStatsError(err.response?.data?.detail || "İstatistikler yüklenemedi.");
+    }
+    setStatsLoading(false);
+  }, [statFilters, navigate]);
+
+  const openStats = () => {
+    setTab("stats");
+    if (!statsLoaded) loadStats();
+  };
+
+  const resetStatFilters = () => setStatFilters({ date_from: "", date_to: "" });
+
   if (!ready) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#0b1120]" data-testid="ramact-loading">
@@ -271,7 +346,7 @@ export default function RamActivities() {
         <div className="mb-6 flex flex-wrap gap-2 text-sm">
           <button type="button" onClick={() => setTab("add")} data-testid="ramact-tab-add" className={tabCls(tab === "add")}>Çalışma Ekle</button>
           <button type="button" onClick={openRecords} data-testid="ramact-tab-records" className={tabCls(tab === "records")}>Çalışma Kayıtları</button>
-          <span className="rounded-full bg-white/[0.04] px-4 py-1.5 font-semibold text-slate-500 ring-1 ring-white/10">İstatistikler · Yakında</span>
+          <button type="button" onClick={openStats} data-testid="ramact-tab-stats" className={tabCls(tab === "stats")}>İstatistikler</button>
           <span className="rounded-full bg-white/[0.04] px-4 py-1.5 font-semibold text-slate-500 ring-1 ring-white/10">Yıl Sonu Raporu · Yakında</span>
         </div>
 
@@ -489,6 +564,139 @@ export default function RamActivities() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {tab === "stats" && (
+          <div data-testid="ramact-stats">
+            {/* Tarih filtresi */}
+            <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-400">Başlangıç Tarihi</label>
+                  <input type="date" value={statFilters.date_from} onChange={(e) => setStatFilters((f) => ({ ...f, date_from: e.target.value }))} data-testid="ramact-stats-from" className={fieldCls} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-400">Bitiş Tarihi</label>
+                  <input type="date" value={statFilters.date_to} onChange={(e) => setStatFilters((f) => ({ ...f, date_to: e.target.value }))} data-testid="ramact-stats-to" className={fieldCls} />
+                </div>
+                <div className="flex items-end gap-2 sm:col-span-2">
+                  <button type="button" onClick={loadStats} data-testid="ramact-stats-apply" className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-4 py-2.5 text-sm font-bold text-white transition hover:opacity-90">
+                    <ListChecks size={15} /> Uygula
+                  </button>
+                  {(statFilters.date_from || statFilters.date_to) && (
+                    <button type="button" onClick={() => { resetStatFilters(); }} data-testid="ramact-stats-reset" className="inline-flex items-center gap-2 rounded-xl bg-white/[0.06] px-4 py-2.5 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+                      <FilterX size={15} /> Temizle
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {statsError && (
+              <div data-testid="ramact-stats-error" className="mb-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{statsError}</span>
+              </div>
+            )}
+
+            {statsLoading ? (
+              <div className="grid place-items-center py-16" data-testid="ramact-stats-loading">
+                <Loader2 size={26} className="animate-spin text-emerald-300" />
+              </div>
+            ) : stats && !statsError && stats.summary?.activities_count === 0 ? (
+              <div data-testid="ramact-stats-empty" className="grid place-items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] py-16 text-center">
+                <BarChart3 size={28} className="text-slate-500" />
+                <p className="text-sm font-semibold text-slate-300">
+                  {(statFilters.date_from || statFilters.date_to)
+                    ? "Seçilen tarih aralığında çalışma kaydı bulunamadı."
+                    : "Henüz çalışma kaydı bulunmuyor."}
+                </p>
+              </div>
+            ) : stats && !statsError ? (
+              <div className="space-y-6">
+                {/* 1. Genel Özet Kartları */}
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                  {[
+                    { key: "activities_count", label: "Toplam Çalışma", Icon: ClipboardList, tint: "text-emerald-300" },
+                    { key: "student_count", label: "Öğrenci", Icon: GraduationCap, tint: "text-sky-300" },
+                    { key: "teacher_count", label: "Öğretmen", Icon: UserCog, tint: "text-indigo-300" },
+                    { key: "parent_count", label: "Veli", Icon: UsersRound, tint: "text-amber-300" },
+                    { key: "total_participants", label: "Toplam Katılımcı", Icon: Users, tint: "text-fuchsia-300" },
+                  ].map((c) => (
+                    <div key={c.key} data-testid={`ramact-stat-card-${c.key}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                      <c.Icon size={18} className={c.tint} />
+                      <p className="mt-2 text-2xl font-extrabold text-white">{stats.summary[c.key]}</p>
+                      <p className="text-xs text-slate-400">{c.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 2. Hedef Türlerine Göre Dağılım */}
+                <section>
+                  <h2 className="mb-3 text-base font-bold text-white">Hedef Türlerine Göre Dağılım</h2>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {stats.target_types.map((t) => {
+                      const max = Math.max(1, ...stats.target_types.map((x) => x.activities_count));
+                      const pct = Math.round((t.activities_count / max) * 100);
+                      return (
+                        <div key={t.target_type} data-testid={`ramact-stat-target-${t.target_type}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-sm font-semibold text-white">{TARGET_LABELS[t.target_type] || t.target_type}</span>
+                            <span className="text-sm font-bold text-emerald-300">{t.activities_count} çalışma</span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                            <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-indigo-500" style={{ width: `${pct}%` }} />
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+                            <span>Öğrenci: <b className="text-slate-200">{t.student_count}</b></span>
+                            <span>Öğretmen: <b className="text-slate-200">{t.teacher_count}</b></span>
+                            <span>Veli: <b className="text-slate-200">{t.parent_count}</b></span>
+                            <span>Toplam: <b className="text-slate-200">{t.total_participants}</b></span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {/* 3. Aylara Göre Çalışmalar */}
+                {stats.monthly.length > 0 && (
+                  <section>
+                    <h2 className="mb-3 text-base font-bold text-white">Aylara Göre Çalışmalar</h2>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                      <div className="space-y-3">
+                        {stats.monthly.map((m) => {
+                          const max = Math.max(1, ...stats.monthly.map((x) => x.activities_count));
+                          const pct = Math.round((m.activities_count / max) * 100);
+                          return (
+                            <div key={m.month_key} data-testid={`ramact-stat-month-${m.month_key}`}>
+                              <div className="mb-1 flex items-center justify-between text-xs">
+                                <span className="font-semibold text-slate-200">{m.label}</span>
+                                <span className="text-slate-400">{m.activities_count} çalışma · {m.total_participants} katılımcı</span>
+                              </div>
+                              <div className="h-2 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                                <div className="h-full rounded-full bg-gradient-to-r from-sky-500 to-emerald-500" style={{ width: `${pct}%` }} />
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-slate-500">
+                                <span>Öğrenci {m.student_count}</span>
+                                <span>Öğretmen {m.teacher_count}</span>
+                                <span>Veli {m.parent_count}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                {/* 4-7. Tablolar */}
+                <StatTable testid="ramact-stat-titles" heading="Konu / Çalışma Başlığı Analizi" firstCol="Konu / Çalışma Başlığı" nameKey="title" rows={stats.titles} />
+                <StatTable testid="ramact-stat-types" heading="Çalışma Türü Analizi" firstCol="Çalışma Türü" nameKey="activity_type" rows={stats.activity_types} />
+                <StatTable testid="ramact-stat-districts" heading="İlçelere Göre Analiz" firstCol="İlçe" nameKey="district_name" rows={stats.districts} />
+                <StatTable testid="ramact-stat-institutions" heading="Okul/Kurum Bazlı Analiz" firstCol="Okul/Kurum" nameKey="institution_name" rows={stats.institutions} />
+              </div>
+            ) : null}
           </div>
         )}
       </main>

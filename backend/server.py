@@ -1107,6 +1107,125 @@ async def ram_list_activities(request: Request):
     return {"activities": activities, "count": len(activities)}
 
 
+@api.get("/ram/activities/statistics")
+async def ram_activities_statistics(request: Request):
+    """Aggregate statistics for the logged-in RAM's own activities only.
+
+    RAM isolation: ram_id resolved from the token; the query is ALWAYS limited
+    to ram_activities.ram_id = acc["ram_id"]. Optional date_from/date_to filter
+    (date_from > date_to -> 400). All metrics are computed in the backend from
+    the real rows. total_participants = student + teacher + parent (never in DB).
+    """
+    _uid, acc = _require_ram_ready(request)
+    ram_id = acc["ram_id"]
+
+    qp = request.query_params
+    date_from = (qp.get("date_from") or "").strip()
+    date_to = (qp.get("date_to") or "").strip()
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="Başlangıç tarihi bitiş tarihinden sonra olamaz.")
+
+    client = get_service_client()
+    query = (
+        client.table("ram_activities")
+        .select("activity_date,district_id,institution_name,activity_type,title,target_type,student_count,teacher_count,parent_count")
+        .eq("ram_id", ram_id)
+    )
+    if date_from:
+        query = query.gte("activity_date", date_from)
+    if date_to:
+        query = query.lte("activity_date", date_to)
+    rows = query.execute().data or []
+
+    TR_MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+
+    def _blank():
+        return {"activities_count": 0, "student_count": 0, "teacher_count": 0, "parent_count": 0, "total_participants": 0}
+
+    def _add(acc_dict, r, sc, tc, pc):
+        acc_dict["activities_count"] += 1
+        acc_dict["student_count"] += sc
+        acc_dict["teacher_count"] += tc
+        acc_dict["parent_count"] += pc
+        acc_dict["total_participants"] += sc + tc + pc
+
+    summary = _blank()
+    target_map = {t: _blank() for t in ("genel_hedef", "yerel_hedef", "ozel_hedef", "hedef_disi")}
+    monthly = {}       # key "YYYY-MM" -> agg (+year/month)
+    titles = {}        # title -> agg
+    types = {}         # activity_type -> agg
+    districts = {}     # district_id -> agg
+    institutions = {}  # institution_name -> agg
+
+    for r in rows:
+        sc = r.get("student_count") or 0
+        tc = r.get("teacher_count") or 0
+        pc = r.get("parent_count") or 0
+
+        _add(summary, r, sc, tc, pc)
+
+        tt = r.get("target_type")
+        if tt in target_map:
+            _add(target_map[tt], r, sc, tc, pc)
+
+        adate = (r.get("activity_date") or "")[:10]
+        if len(adate) >= 7:
+            ym = adate[:7]
+            if ym not in monthly:
+                y, m = ym.split("-")[0], ym.split("-")[1]
+                mi = int(m)
+                monthly[ym] = {**_blank(), "year": int(y), "month": mi,
+                               "month_key": ym,
+                               "month_name": TR_MONTHS[mi - 1] if 1 <= mi <= 12 else m,
+                               "label": f"{TR_MONTHS[mi - 1]} {y}" if 1 <= mi <= 12 else ym}
+            _add(monthly[ym], r, sc, tc, pc)
+
+        title = r.get("title") or ""
+        if title:
+            titles.setdefault(title, {**_blank(), "title": title})
+            _add(titles[title], r, sc, tc, pc)
+
+        atype = r.get("activity_type") or ""
+        if atype:
+            types.setdefault(atype, {**_blank(), "activity_type": atype})
+            _add(types[atype], r, sc, tc, pc)
+
+        did = r.get("district_id")
+        if did is not None:
+            districts.setdefault(did, {**_blank(), "district_id": did})
+            _add(districts[did], r, sc, tc, pc)
+
+        inst = r.get("institution_name") or ""
+        if inst:
+            institutions.setdefault(inst, {**_blank(), "institution_name": inst})
+            _add(institutions[inst], r, sc, tc, pc)
+
+    # Resolve district names.
+    dmap = {}
+    for d in (client.table("districts").select("id,name").execute().data or []):
+        dmap[d["id"]] = d["name"]
+    districts_list = []
+    for did, agg in districts.items():
+        agg["district_name"] = dmap.get(did)
+        districts_list.append(agg)
+
+    def _sort_groups(items, name_key):
+        return sorted(items, key=lambda x: (-x["activities_count"], -x["total_participants"], (x.get(name_key) or "").lower()))
+
+    target_types_list = [{"target_type": t, **target_map[t]} for t in ("genel_hedef", "yerel_hedef", "ozel_hedef", "hedef_disi")]
+    monthly_list = sorted(monthly.values(), key=lambda x: (x["year"], x["month"]))
+
+    return {
+        "summary": summary,
+        "target_types": target_types_list,
+        "monthly": monthly_list,
+        "titles": _sort_groups(list(titles.values()), "title"),
+        "activity_types": _sort_groups(list(types.values()), "activity_type"),
+        "districts": _sort_groups(districts_list, "district_name"),
+        "institutions": _sort_groups(list(institutions.values()), "institution_name"),
+    }
+
+
 def _require_school_ready(request: Request):
     """Active school account that has completed mandatory password change.
 
