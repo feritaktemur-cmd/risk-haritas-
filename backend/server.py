@@ -905,6 +905,89 @@ async def ram_create_activity(request: Request):
     return {"activity": row, "total_participants": total}
 
 
+@api.get("/ram/activities")
+async def ram_list_activities(request: Request):
+    """List activities for the logged-in RAM only.
+
+    RAM isolation is enforced in the backend: the query is ALWAYS restricted to
+    ram_activities.ram_id = acc["ram_id"] (resolved from the token, never from
+    the client). Optional filters: district_id, target_type, date_from, date_to.
+    Sorted by activity_date DESC, then created_at DESC. total_participants is
+    computed in the response (never stored). District name is resolved safely
+    from the districts table.
+    """
+    _uid, acc = _require_ram_ready(request)
+    ram_id = acc["ram_id"]
+
+    qp = request.query_params
+    district_id = qp.get("district_id")
+    target_type = qp.get("target_type")
+    date_from = (qp.get("date_from") or "").strip()
+    date_to = (qp.get("date_to") or "").strip()
+
+    client = get_service_client()
+    query = (
+        client.table("ram_activities")
+        .select("id,activity_date,district_id,institution_name,activity_type,title,target_type,student_count,teacher_count,parent_count,note,created_at")
+        .eq("ram_id", ram_id)
+    )
+
+    if district_id not in (None, ""):
+        try:
+            query = query.eq("district_id", int(district_id))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Geçersiz ilçe.")
+
+    if target_type not in (None, ""):
+        if target_type not in ("genel_hedef", "yerel_hedef", "ozel_hedef", "hedef_disi"):
+            raise HTTPException(status_code=400, detail="Geçersiz hedef türü.")
+        query = query.eq("target_type", target_type)
+
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=400, detail="Başlangıç tarihi bitiş tarihinden sonra olamaz.")
+    if date_from:
+        query = query.gte("activity_date", date_from)
+    if date_to:
+        query = query.lte("activity_date", date_to)
+
+    rows = (
+        query.order("activity_date", desc=True)
+        .order("created_at", desc=True)
+        .execute()
+        .data
+    ) or []
+
+    # Resolve district names safely (id -> name) in one lookup.
+    dmap = {}
+    drows = client.table("districts").select("id,name").execute().data or []
+    for d in drows:
+        dmap[d["id"]] = d["name"]
+
+    activities = []
+    for r in rows:
+        sc = r.get("student_count") or 0
+        tc = r.get("teacher_count") or 0
+        pc = r.get("parent_count") or 0
+        activities.append({
+            "id": r.get("id"),
+            "activity_date": r.get("activity_date"),
+            "district_id": r.get("district_id"),
+            "district_name": dmap.get(r.get("district_id")),
+            "institution_name": r.get("institution_name"),
+            "activity_type": r.get("activity_type"),
+            "title": r.get("title"),
+            "target_type": r.get("target_type"),
+            "student_count": sc,
+            "teacher_count": tc,
+            "parent_count": pc,
+            "total_participants": sc + tc + pc,
+            "note": r.get("note"),
+            "created_at": r.get("created_at"),
+        })
+
+    return {"activities": activities, "count": len(activities)}
+
+
 def _require_school_ready(request: Request):
     """Active school account that has completed mandatory password change.
 

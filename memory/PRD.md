@@ -65,6 +65,15 @@ kullanıcı manuel çalıştırır; agent SQL dosyasını yalnız hazırlar.
 Deployment readiness: deployment_agent PASS (Haziran 2026). Kod tabanı deploy'a hazır;
 env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 
+## RAM Çalışmaları (güncel)
+- Aşama 1 Çalışma Ekle: TAMAM (POST /api/ram/activities, GET /api/ram/districts).
+- Aşama 2 Çalışma Kayıtları: TAMAM (Haziran 2026). GET /api/ram/activities;
+  _require_ram_ready ile korumalı, sorgu daima ram_id=acc["ram_id"] ile sınırlı.
+  Filtre: district_id, target_type, date_from/date_to (ters aralıkta 400).
+  Sıralama activity_date DESC, created_at DESC. total_participants response'ta hesaplanır.
+  Frontend RamActivities.jsx sekmeli (Ekle/Kayıtlar), filtreler + özet + boş durum.
+- Sonraki: İstatistikler ve Yıl Sonu PDF (P1); Genel Admin RAM aktif/pasif & şifre sıfırlama (P2).
+
 ## Backlog / Sonraki olası görevler
 - RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)
 - Submission status workflow (under_review / revision_requested / approved) UI+backend
