@@ -72,6 +72,11 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
   Filtre: district_id, target_type, date_from/date_to (ters aralıkta 400).
   Sıralama activity_date DESC, created_at DESC. total_participants response'ta hesaplanır.
   Frontend RamActivities.jsx sekmeli (Ekle/Kayıtlar), filtreler + özet + boş durum.
+- Aşama 3 Düzenleme + Silme: TAMAM (Haziran 2026). PUT /api/ram/activities/{id} ve
+  DELETE /api/ram/activities/{id}; her ikisi de _require_ram_ready + sahiplik (id AND
+  ram_id) kontrolü, başka RAM kaydına güvenli 404. POST/PUT ortak validasyon helper'ı
+  (_validate_ram_activity_payload). Frontend: düzenleme modalı + silme onay modalı,
+  başarı sonrası mevcut filtreler korunarak liste yeniden çekilir.
 - Sonraki: İstatistikler ve Yıl Sonu PDF (P1); Genel Admin RAM aktif/pasif & şifre sıfırlama (P2).
 
 ## Backlog / Sonraki olası görevler

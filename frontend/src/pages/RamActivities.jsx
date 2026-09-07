@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, CheckCircle2, ListChecks, ChevronDown, ChevronUp, Inbox, FilterX } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, ClipboardList, CheckCircle2, ListChecks, ChevronDown, ChevronUp, Inbox, FilterX, Pencil, Trash2, X } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -57,6 +57,19 @@ export default function RamActivities() {
   const [listError, setListError] = useState(null);
   const [expanded, setExpanded] = useState(null);
   const [listLoaded, setListLoaded] = useState(false);
+
+  // Düzenleme modal state
+  const [editing, setEditing] = useState(null); // aktif kaydın id'si
+  const [editForm, setEditForm] = useState(EMPTY);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
+
+  // Silme onayı state
+  const [deleteTarget, setDeleteTarget] = useState(null); // {id, activity_date, title}
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+
+  const [listSuccess, setListSuccess] = useState(null);
 
   const hasFilters = useMemo(
     () => filters.district_id || filters.target_type || filters.date_from || filters.date_to,
@@ -119,6 +132,77 @@ export default function RamActivities() {
 
   const resetFilters = () => {
     setFilters(EMPTY_FILTERS);
+  };
+
+  const editTotal = toInt(editForm.student_count) + toInt(editForm.teacher_count) + toInt(editForm.parent_count);
+
+  const openEdit = (a) => {
+    setEditError(null);
+    setEditing(a.id);
+    setEditForm({
+      activity_date: a.activity_date || "",
+      district_id: a.district_id != null ? String(a.district_id) : "",
+      institution_name: a.institution_name || "",
+      activity_type: a.activity_type || "",
+      title: a.title || "",
+      target_type: a.target_type || "",
+      student_count: a.student_count != null ? String(a.student_count) : "",
+      teacher_count: a.teacher_count != null ? String(a.teacher_count) : "",
+      parent_count: a.parent_count != null ? String(a.parent_count) : "",
+      note: a.note || "",
+    });
+  };
+
+  const closeEdit = () => { setEditing(null); setEditError(null); };
+  const setEdit = (k, v) => setEditForm((f) => ({ ...f, [k]: v }));
+
+  const submitEdit = async (e) => {
+    e.preventDefault();
+    setEditError(null);
+    setEditSaving(true);
+    const h = await authHeader();
+    if (!h) { navigate("/ram/login", { replace: true }); return; }
+    try {
+      await axios.put(`${API}/ram/activities/${editing}`, {
+        activity_date: editForm.activity_date,
+        district_id: editForm.district_id,
+        institution_name: editForm.institution_name.trim(),
+        activity_type: editForm.activity_type.trim(),
+        title: editForm.title.trim(),
+        target_type: editForm.target_type,
+        student_count: toInt(editForm.student_count),
+        teacher_count: toInt(editForm.teacher_count),
+        parent_count: toInt(editForm.parent_count),
+        note: editForm.note.trim(),
+      }, { headers: h });
+      setEditing(null);
+      setListSuccess("Çalışma kaydı güncellendi.");
+      await loadActivities(); // mevcut filtreler korunarak yeniden çekilir
+    } catch (err) {
+      if (err.response?.status === 401) { await supabase.auth.signOut(); navigate("/ram/login", { replace: true }); return; }
+      if (err.response?.status === 403) { navigate("/ram/change-password", { replace: true }); return; }
+      setEditError(err.response?.data?.detail || "Çalışma kaydı güncellenemedi.");
+    }
+    setEditSaving(false);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteError(null);
+    setDeleting(true);
+    const h = await authHeader();
+    if (!h) { navigate("/ram/login", { replace: true }); return; }
+    try {
+      await axios.delete(`${API}/ram/activities/${deleteTarget.id}`, { headers: h });
+      setDeleteTarget(null);
+      setListSuccess("Çalışma kaydı silindi.");
+      await loadActivities(); // mevcut filtreler korunarak yeniden çekilir
+    } catch (err) {
+      if (err.response?.status === 401) { await supabase.auth.signOut(); navigate("/ram/login", { replace: true }); return; }
+      if (err.response?.status === 403) { navigate("/ram/change-password", { replace: true }); return; }
+      setDeleteError(err.response?.data?.detail || "Çalışma kaydı silinemedi.");
+    }
+    setDeleting(false);
   };
 
   const onSubmit = async (e) => {
@@ -325,6 +409,12 @@ export default function RamActivities() {
               </div>
             )}
 
+            {listSuccess && (
+              <div data-testid="ramact-list-success" className="mb-4 flex items-start gap-2 rounded-xl bg-emerald-500/10 p-3 text-sm text-emerald-300 ring-1 ring-emerald-400/20">
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> <span>{listSuccess}</span>
+              </div>
+            )}
+
             {/* Özet satırı */}
             {!listLoading && !listError && (
               <p data-testid="ramact-list-summary" className="mb-3 text-sm text-slate-400">
@@ -386,6 +476,15 @@ export default function RamActivities() {
                         {a.note}
                       </p>
                     )}
+
+                    <div className="mt-3 flex flex-wrap justify-end gap-2 border-t border-white/5 pt-3">
+                      <button type="button" onClick={() => openEdit(a)} data-testid={`ramact-edit-${a.id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.12]">
+                        <Pencil size={13} /> Düzenle
+                      </button>
+                      <button type="button" onClick={() => { setDeleteError(null); setDeleteTarget({ id: a.id, activity_date: a.activity_date, title: a.title }); }} data-testid={`ramact-delete-${a.id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 ring-1 ring-rose-400/20 transition hover:bg-rose-500/20">
+                        <Trash2 size={13} /> Sil
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -393,6 +492,128 @@ export default function RamActivities() {
           </div>
         )}
       </main>
+
+      {/* Düzenleme Modalı */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm" data-testid="ramact-edit-modal">
+          <div className="my-8 w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0b1120] p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-extrabold text-white">Çalışmayı Düzenle</h2>
+              <button type="button" onClick={closeEdit} data-testid="ramact-edit-close" className="grid h-8 w-8 place-items-center rounded-lg bg-white/[0.06] text-slate-300 ring-1 ring-white/10 transition hover:bg-white/[0.12]">
+                <X size={16} />
+              </button>
+            </div>
+
+            {editError && (
+              <div data-testid="ramact-edit-error" className="mb-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={submitEdit} data-testid="ramact-edit-form" className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Çalışma Tarihi</label>
+                <input type="date" required value={editForm.activity_date} onChange={(e) => setEdit("activity_date", e.target.value)} data-testid="ramact-edit-date" className={fieldCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-300">İlçe</label>
+                <select required value={editForm.district_id} onChange={(e) => setEdit("district_id", e.target.value)} data-testid="ramact-edit-district" className={fieldCls}>
+                  <option value="">İlçe seçin</option>
+                  {districts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Çalışmanın Yapıldığı Okul/Kurum</label>
+                <input type="text" required value={editForm.institution_name} onChange={(e) => setEdit("institution_name", e.target.value)} data-testid="ramact-edit-institution" className={fieldCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Çalışma Türü</label>
+                <input type="text" required value={editForm.activity_type} onChange={(e) => setEdit("activity_type", e.target.value)} data-testid="ramact-edit-type" className={fieldCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Konu / Çalışma Başlığı</label>
+                <input type="text" required value={editForm.title} onChange={(e) => setEdit("title", e.target.value)} data-testid="ramact-edit-title-input" className={fieldCls} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Hedef Türü</label>
+                <select required value={editForm.target_type} onChange={(e) => setEdit("target_type", e.target.value)} data-testid="ramact-edit-target" className={fieldCls}>
+                  <option value="">Hedef türü seçin</option>
+                  {TARGET_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-300">Öğrenci Sayısı</label>
+                  <input type="number" min="0" value={editForm.student_count} onChange={(e) => setEdit("student_count", e.target.value)} data-testid="ramact-edit-students" className={fieldCls} placeholder="0" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-300">Öğretmen Sayısı</label>
+                  <input type="number" min="0" value={editForm.teacher_count} onChange={(e) => setEdit("teacher_count", e.target.value)} data-testid="ramact-edit-teachers" className={fieldCls} placeholder="0" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-300">Veli Sayısı</label>
+                  <input type="number" min="0" value={editForm.parent_count} onChange={(e) => setEdit("parent_count", e.target.value)} data-testid="ramact-edit-parents" className={fieldCls} placeholder="0" />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Toplam Katılımcı</label>
+                <input type="text" readOnly value={editTotal} data-testid="ramact-edit-total" className={`${fieldCls} cursor-not-allowed bg-white/[0.02] text-slate-300`} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-300">Kısa Açıklama / Not</label>
+                <textarea rows={3} value={editForm.note} onChange={(e) => setEdit("note", e.target.value)} data-testid="ramact-edit-note" className={`${fieldCls} resize-y`} placeholder="Opsiyonel" />
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2 pt-2">
+                <button type="button" onClick={closeEdit} data-testid="ramact-edit-cancel" className="rounded-xl bg-white/[0.06] px-5 py-2.5 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+                  Vazgeç
+                </button>
+                <button type="submit" disabled={editSaving} data-testid="ramact-edit-submit" className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2.5 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50">
+                  {editSaving ? <Loader2 size={16} className="animate-spin" /> : null}
+                  Güncelle
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Silme Onay Modalı */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-testid="ramact-delete-modal">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0b1120] p-6 shadow-2xl">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-rose-500/15 text-rose-300">
+                <Trash2 size={20} />
+              </div>
+              <h2 className="text-lg font-extrabold text-white">Kaydı Sil</h2>
+            </div>
+            <p className="text-sm text-slate-300">
+              Bu çalışma kaydını silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.
+            </p>
+            <div className="mt-3 rounded-xl bg-white/[0.04] p-3 text-sm ring-1 ring-white/10">
+              <p className="font-semibold text-white">{deleteTarget.title}</p>
+              <p className="text-xs text-slate-400">{deleteTarget.activity_date}</p>
+            </div>
+
+            {deleteError && (
+              <div data-testid="ramact-delete-error" className="mt-3 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => { setDeleteTarget(null); setDeleteError(null); }} data-testid="ramact-delete-cancel" className="rounded-xl bg-white/[0.06] px-5 py-2.5 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+                Vazgeç
+              </button>
+              <button type="button" onClick={confirmDelete} disabled={deleting} data-testid="ramact-delete-confirm" className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-500 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-rose-600 disabled:opacity-50">
+                {deleting ? <Loader2 size={16} className="animate-spin" /> : null}
+                Kaydı Sil
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

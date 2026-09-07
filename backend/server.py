@@ -822,18 +822,13 @@ async def ram_districts(request: Request):
     return {"districts": rows}
 
 
-@api.post("/ram/activities")
-async def ram_create_activity(request: Request):
-    """Create a single RAM activity record for the logged-in RAM.
+def _validate_ram_activity_payload(body, client):
+    """Shared validation for RAM activity create/update.
 
-    ram_id is resolved ONLY from the token (never from the client). Requires an
-    active RAM account that has completed the mandatory password change.
-    total_participants is NOT stored; it is returned computed for convenience.
+    Returns a dict of the editable, sanitized fields only (never ram_id, id or
+    created_at). Same business rules for POST and PUT. Raises HTTPException(400)
+    on any invalid field.
     """
-    _uid, acc = _require_ram_ready(request)
-    ram_id = acc["ram_id"]
-    body = await request.json() or {}
-
     activity_date = (body.get("activity_date") or "").strip()
     district_id = body.get("district_id")
     institution_name = str(body.get("institution_name") or "").strip()
@@ -873,14 +868,12 @@ async def ram_create_activity(request: Request):
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Geçersiz ilçe.")
 
-    client = get_service_client()
     # District must exist (no RAM<->district authorization).
     drows = client.table("districts").select("id").eq("id", district_id).limit(1).execute().data
     if not drows:
         raise HTTPException(status_code=400, detail="Seçilen ilçe bulunamadı.")
 
-    to_insert = {
-        "ram_id": ram_id,
+    return {
         "activity_date": activity_date,
         "district_id": district_id,
         "institution_name": institution_name,
@@ -892,6 +885,24 @@ async def ram_create_activity(request: Request):
         "parent_count": parent_count,
         "note": note or None,
     }
+
+
+@api.post("/ram/activities")
+async def ram_create_activity(request: Request):
+    """Create a single RAM activity record for the logged-in RAM.
+
+    ram_id is resolved ONLY from the token (never from the client). Requires an
+    active RAM account that has completed the mandatory password change.
+    total_participants is NOT stored; it is returned computed for convenience.
+    """
+    _uid, acc = _require_ram_ready(request)
+    ram_id = acc["ram_id"]
+    body = await request.json() or {}
+
+    client = get_service_client()
+    fields = _validate_ram_activity_payload(body, client)
+
+    to_insert = {"ram_id": ram_id, **fields}
     try:
         resp = client.table("ram_activities").insert(to_insert).execute()
     except Exception as e:  # noqa: BLE001
@@ -899,10 +910,91 @@ async def ram_create_activity(request: Request):
         raise HTTPException(status_code=500, detail="Çalışma kaydı oluşturulamadı.")
 
     row = (resp.data or [None])[0] or {}
-    total = student_count + teacher_count + parent_count
+    total = fields["student_count"] + fields["teacher_count"] + fields["parent_count"]
     if row:
         row["total_participants"] = total
     return {"activity": row, "total_participants": total}
+
+
+@api.put("/ram/activities/{activity_id}")
+async def ram_update_activity(activity_id: str, request: Request):
+    """Update one activity that belongs to the logged-in RAM.
+
+    Ownership is enforced in the backend: the update targets the row only when
+    id = activity_id AND ram_id = acc["ram_id"] (from the token, never client).
+    Only editable fields change; ram_id/id/created_at are never touched. A safe
+    404 is returned if the row is missing or belongs to another RAM (no leak).
+    """
+    _uid, acc = _require_ram_ready(request)
+    ram_id = acc["ram_id"]
+    body = await request.json() or {}
+
+    client = get_service_client()
+    fields = _validate_ram_activity_payload(body, client)
+
+    # Ownership check: id AND ram_id must both match.
+    existing = (
+        client.table("ram_activities")
+        .select("id")
+        .eq("id", activity_id)
+        .eq("ram_id", ram_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Çalışma kaydı bulunamadı.")
+
+    try:
+        resp = (
+            client.table("ram_activities")
+            .update(fields)
+            .eq("id", activity_id)
+            .eq("ram_id", ram_id)
+            .execute()
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("RAM activity update failed")
+        raise HTTPException(status_code=500, detail="Çalışma kaydı güncellenemedi.")
+
+    row = (resp.data or [None])[0] or {}
+    total = fields["student_count"] + fields["teacher_count"] + fields["parent_count"]
+    if row:
+        row["total_participants"] = total
+    return {"activity": row, "total_participants": total}
+
+
+@api.delete("/ram/activities/{activity_id}")
+async def ram_delete_activity(activity_id: str, request: Request):
+    """Delete one activity that belongs to the logged-in RAM.
+
+    Ownership is enforced in the backend (id AND ram_id from the token). A safe
+    404 is returned if the row is missing or belongs to another RAM so the
+    existence of another RAM's record is never revealed. Physical delete.
+    """
+    _uid, acc = _require_ram_ready(request)
+    ram_id = acc["ram_id"]
+
+    client = get_service_client()
+    existing = (
+        client.table("ram_activities")
+        .select("id")
+        .eq("id", activity_id)
+        .eq("ram_id", ram_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Çalışma kaydı bulunamadı.")
+
+    try:
+        client.table("ram_activities").delete().eq("id", activity_id).eq("ram_id", ram_id).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("RAM activity delete failed")
+        raise HTTPException(status_code=500, detail="Çalışma kaydı silinemedi.")
+
+    return {"deleted": True, "id": activity_id}
 
 
 @api.get("/ram/activities")
