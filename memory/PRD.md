@@ -93,6 +93,19 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
   ile client-side PDF (src/lib/ramReportPdf.js). Boş veride PDF üretilmez, uyarı gösterilir.
 - Sonraki: Genel Admin RAM aktif/pasif & şifre sıfırlama (P2).
 
+## RAM Risk Haritası Entegrasyonu (dinamik görünürlük)
+- Aşama 1 (TAMAM): 015_ram_districts.sql — 15 ilçe → 6 RAM eşlemesi (UNIQUE(district_id), RLS on).
+- Aşama 2 (TAMAM): backend visibility temeli — _ram_responsible_district_ids,
+  _ram_scoped_school_ids, _aggregate_snapshots'a geriye uyumlu district_ids (boş liste = 0 veri).
+- Aşama 3 (TAMAM, Haziran 2026): RAM submission list/detail.
+  * Backend: GET /api/ram/risk-map/districts (yalnız sorumlu ilçeler),
+    GET /api/ram/risk-map/submissions (token→ram_id→scoped school_ids; kapsam dışı district_id genişletmez),
+    GET /api/ram/risk-map/submissions/{id} (sahiplik gate: submission ilçesi sorumlu ilçelerde değilse/yoksa aynı 404).
+    Ortak _build_submission_detail helper'ı admin + RAM detay için tek doğruluk kaynağı.
+  * Frontend: RamModules'a "Risk Haritası" kartı; /ram/risk-map (liste) + /ram/risk-map/submissions/:id (detay).
+  * Genel Admin ve peer-comparison davranışı korundu.
+- Sonraki: Aşama 4 RAM aggregate Risk Haritası; Aşama 5 "RAM'a Gönder" son kontrol.
+
 ## Backlog / Sonraki olası görevler
 - RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)
 - Submission status workflow (under_review / revision_requested / approved) UI+backend

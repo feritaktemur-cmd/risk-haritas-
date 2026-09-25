@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, LogOut, Building2, ClipboardList } from "lucide-react";
+import { Loader2, LogOut, Building2, ClipboardList, MapPinned } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
@@ -83,6 +83,20 @@ export default function RamModules() {
             <span className="mt-4 block text-base font-bold text-white">RAM Çalışmaları</span>
             <span className="mt-2 block text-sm text-slate-400">
               RAM tarafından yürütülen çalışmaların kaydı, takibi, istatistikleri ve yıl sonu raporları.
+            </span>
+          </button>
+
+          <button
+            onClick={() => navigate("/ram/risk-map")}
+            data-testid="module-ram-risk-map"
+            className="group relative flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-left transition hover:border-emerald-400/40 hover:bg-white/[0.06]"
+          >
+            <span className="grid h-12 w-12 place-items-center rounded-xl bg-indigo-500/15 text-indigo-300">
+              <MapPinned size={24} />
+            </span>
+            <span className="mt-4 block text-base font-bold text-white">Risk Haritası</span>
+            <span className="mt-2 block text-sm text-slate-400">
+              Sorumlu olduğunuz ilçelerdeki okulların RAM'a gönderdiği toplu (anonim) Risk Haritası snapshot'larını görüntüleyin.
             </span>
           </button>
         </div>

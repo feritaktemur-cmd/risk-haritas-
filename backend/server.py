@@ -2906,34 +2906,16 @@ async def admin_risk_map_submissions(request: Request, district_id: int = None, 
     return {"submissions": items}
 
 
-@api.get("/admin/risk-map/submissions/{submission_id}")
-async def admin_risk_map_submission_detail(request: Request, submission_id: str):
-    """Read-only detail of ONE submission snapshot (by submission_id only).
+def _build_submission_detail(client, sub):
+    """Shared read-only snapshot detail builder (single source of truth).
 
-    General Admin only. All numeric results come strictly from the snapshot
-    tables of THIS submission_id (never live student data, never "latest
-    version" logic). No student identity / free-text notes are returned.
+    Takes an already-fetched school_submissions row `sub` (must include the
+    embedded school/district/academic_year selects) and returns the full detail
+    payload strictly from snapshot tables of THIS submission id. Used by BOTH
+    the General Admin and the RAM detail endpoints so the numbers are identical.
+    Never reads live student data; no student identity / free-text notes.
     """
-    _require_general_admin(request)
-    client = get_service_client()
-
-    subs = (
-        client.table("school_submissions")
-        .select(
-            "id,version_no,status,total_students,completed_students,"
-            "not_entered_students,total_risk_marks,submitted_at,"
-            "school:schools(name,district:districts(name)),"
-            "academic_year:academic_years(name)"
-        )
-        .eq("id", submission_id)
-        .limit(1)
-        .execute()
-        .data
-    )
-    sub = subs[0] if subs else None
-    if sub is None:
-        raise HTTPException(status_code=404, detail="Gönderim kaydı bulunamadı.")
-
+    submission_id = sub["id"]
     total = sub.get("total_students") or 0
     completed = sub.get("completed_students") or 0
     rate = round((completed / total) * 100, 1) if total else 0
@@ -2944,8 +2926,6 @@ async def admin_risk_map_submission_detail(request: Request, submission_id: str)
     # Reference labels/order (names only — no numbers from here).
     domains_ref = client.table("risk_domains").select("id,name,sort_order").eq("is_active", True).order("sort_order").execute().data
     cats_ref = client.table("risk_categories").select("id,label,sort_order").eq("is_active", True).order("sort_order").execute().data
-    domain_meta = {d["id"]: d for d in domains_ref}
-    cat_meta = {c["id"]: c for c in cats_ref}
 
     # School-level 8 domains (from snapshot).
     dom_rows = client.table("submission_domain_totals").select("risk_domain_id,student_count").eq("submission_id", submission_id).execute().data
@@ -3035,6 +3015,171 @@ async def admin_risk_map_submission_detail(request: Request, submission_id: str)
         "categories": categories,
         "classes": classes,
     }
+
+
+_SUBMISSION_DETAIL_SELECT = (
+    "id,version_no,status,total_students,completed_students,"
+    "not_entered_students,total_risk_marks,submitted_at,school_id,"
+    "school:schools(name,district_id,district:districts(name)),"
+    "academic_year:academic_years(name)"
+)
+
+
+@api.get("/admin/risk-map/submissions/{submission_id}")
+async def admin_risk_map_submission_detail(request: Request, submission_id: str):
+    """Read-only detail of ONE submission snapshot (by submission_id only).
+
+    General Admin only. All numeric results come strictly from the snapshot
+    tables of THIS submission_id (never live student data, never "latest
+    version" logic). No student identity / free-text notes are returned.
+    """
+    _require_general_admin(request)
+    client = get_service_client()
+
+    subs = (
+        client.table("school_submissions")
+        .select(_SUBMISSION_DETAIL_SELECT)
+        .eq("id", submission_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    sub = subs[0] if subs else None
+    if sub is None:
+        raise HTTPException(status_code=404, detail="Gönderim kaydı bulunamadı.")
+
+    return _build_submission_detail(client, sub)
+
+
+@api.get("/ram/risk-map/districts")
+async def ram_risk_map_districts(request: Request):
+    """The RAM's OWN responsible districts (for the Risk Map list filter).
+
+    Scope resolved server-side: token -> ram_id -> ram_districts. Unlike
+    /ram/districts (activity form, all districts), this returns ONLY the
+    districts this RAM is responsible for. Empty if the RAM has no mapping.
+    """
+    _uid, acc = _require_ram_ready(request)
+    client = get_service_client()
+    district_ids = _ram_responsible_district_ids(client, acc["ram_id"])
+    if not district_ids:
+        return {"districts": []}
+    rows = client.table("districts").select("id,name").in_("id", district_ids).order("name").execute().data or []
+    return {"districts": rows}
+
+
+@api.get("/ram/risk-map/submissions")
+async def ram_risk_map_submissions(request: Request, district_id: int = None, q: str = None, status: str = "all"):
+    """Read-only list of Risk Map submissions WITHIN the RAM's own scope.
+
+    Authorization is fully server-side: token -> ram_id -> responsible
+    districts -> scoped school_ids. Only submissions of those schools are
+    returned. ram_id is NEVER taken from the client. If the RAM has no schools
+    in scope, an empty list is returned (never an unfiltered query). A
+    district_id query outside the RAM's responsible districts does NOT widen
+    scope: it safely yields 0 rows. Same snapshot/version semantics as the
+    General Admin list (newest first).
+    """
+    _uid, acc = _require_ram_ready(request)
+    client = get_service_client()
+
+    school_ids, responsible_district_ids = _ram_scoped_school_ids(client, acc["ram_id"])
+    if not school_ids:
+        return {"submissions": []}
+
+    responsible_set = set(responsible_district_ids)
+    # A district filter can only NARROW within scope, never widen it.
+    if district_id is not None and district_id not in responsible_set:
+        return {"submissions": []}
+
+    sel = (
+        "id,version_no,status,total_students,completed_students,"
+        "not_entered_students,total_risk_marks,submitted_at,school_id,"
+        "school:schools(name,district_id,district:districts(name)),"
+        "academic_year:academic_years(name)"
+    )
+    rows = _fetch_all(
+        lambda a, b: client.table("school_submissions").select(sel)
+        .in_("school_id", school_ids)
+        .order("submitted_at", desc=True)
+        .range(a, b)
+    )
+
+    items = []
+    for r in rows:
+        school = r.get("school") or {}
+        district = (school.get("district") or {}).get("name")
+        s_district_id = school.get("district_id")
+        school_name = school.get("name")
+
+        # Defense-in-depth: only schools inside responsible districts.
+        if s_district_id not in responsible_set:
+            continue
+        if district_id is not None and s_district_id != district_id:
+            continue
+        if q and (not school_name or q.lower() not in school_name.lower()):
+            continue
+        if status != "all" and r.get("status") != status:
+            continue
+
+        total = r.get("total_students") or 0
+        completed = r.get("completed_students") or 0
+        rate = round((completed / total) * 100, 1) if total else 0
+
+        items.append({
+            "submission_id": r["id"],
+            "school_name": school_name,
+            "district": district,
+            "academic_year": (r.get("academic_year") or {}).get("name"),
+            "version_no": r["version_no"],
+            "status": r["status"],
+            "total_students": total,
+            "completed_students": completed,
+            "not_entered_students": r.get("not_entered_students") or 0,
+            "completion_rate": rate,
+            "total_risk_marks": r.get("total_risk_marks") or 0,
+            "submitted_at": r.get("submitted_at"),
+        })
+
+    return {"submissions": items}
+
+
+@api.get("/ram/risk-map/submissions/{submission_id}")
+async def ram_risk_map_submission_detail(request: Request, submission_id: str):
+    """Read-only detail of ONE submission — ONLY if it is in the RAM's scope.
+
+    CRITICAL: knowing a submission_id grants no access. Flow: token -> ram_id
+    -> responsible districts -> the submission's school district must be one of
+    them. If the submission does not exist, OR belongs to a school outside this
+    RAM's scope, the SAME 404 is returned ("Gönderim kaydı bulunamadı.") so the
+    existence of another RAM's record is never leaked (no 403). Detail numbers
+    come from the shared _build_submission_detail (single source of truth),
+    strictly from snapshot tables — never live student data.
+    """
+    _uid, acc = _require_ram_ready(request)
+    client = get_service_client()
+
+    responsible = set(_ram_responsible_district_ids(client, acc["ram_id"]))
+
+    subs = (
+        client.table("school_submissions")
+        .select(_SUBMISSION_DETAIL_SELECT)
+        .eq("id", submission_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    sub = subs[0] if subs else None
+    if sub is None:
+        raise HTTPException(status_code=404, detail="Gönderim kaydı bulunamadı.")
+
+    sub_district_id = (sub.get("school") or {}).get("district_id")
+    if not responsible or sub_district_id not in responsible:
+        # Out-of-scope (or RAM has no districts) -> same 404 as "not found".
+        raise HTTPException(status_code=404, detail="Gönderim kaydı bulunamadı.")
+
+    return _build_submission_detail(client, sub)
+
 
 
 @api.get("/admin/academic-years")
