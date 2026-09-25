@@ -99,6 +99,35 @@ def _require_ram_ready(request: Request):
     return auth_user_id, acc
 
 
+def _ram_responsible_district_ids(client, ram_id):
+    """Authoritative RAM scope: the district_id list a RAM is responsible for.
+
+    Reads public.ram_districts for the given ram_id (which callers MUST take
+    from _require_ram_ready(request), NEVER from the client). Returns a list of
+    SMALLINT district ids. If the RAM has no mapping, returns [] -> no access
+    (this must never be treated as "all districts" by callers).
+    """
+    rows = _fetch_all(
+        lambda a, b: client.table("ram_districts").select("district_id").eq("ram_id", ram_id).range(a, b)
+    )
+    return [r["district_id"] for r in rows if r.get("district_id") is not None]
+
+
+def _ram_scoped_school_ids(client, ram_id):
+    """school_id list a RAM may access: ram_id -> districts -> schools.
+
+    Scope is resolved server-side only. An empty responsible-district list (or
+    no schools in those districts) yields [] -> zero access, never all schools.
+    """
+    district_ids = _ram_responsible_district_ids(client, ram_id)
+    if not district_ids:
+        return [], []
+    schools = _fetch_all(
+        lambda a, b: client.table("schools").select("id").in_("district_id", district_ids).range(a, b)
+    )
+    return [s["id"] for s in schools], district_ids
+
+
 def _school_display(client, school_id):
     rows = client.table("schools").select("name,district:districts(name)").eq("id", school_id).limit(1).execute().data
     if not rows:
@@ -3033,7 +3062,8 @@ async def admin_school_refs(request: Request):
 
 
 def _aggregate_snapshots(client, academic_year_id, district_id=None, education_level_id=None,
-                         school_type_id=None, management_type_id=None, exclude_school_id=None):
+                         school_type_id=None, management_type_id=None, exclude_school_id=None,
+                         district_ids=None):
     """Shared snapshot aggregation core (single source of truth).
 
     Reads ONLY snapshot tables. For each school+year the HIGHEST version_no
@@ -3042,7 +3072,29 @@ def _aggregate_snapshots(client, academic_year_id, district_id=None, education_l
     drops the caller's own school (used by peer comparison). Percentages use
     SUM(student_count)/SUM(completed_students) — never an average of per-school
     percentages. No student identity is read/returned.
+
+    `district_ids` (RAM scope): when None the behaviour is unchanged (General
+    Admin / peer-comparison). When a list is given, only schools whose
+    district_id is in that list are included. SECURITY: an EMPTY list means "no
+    districts" -> zero schools / zero data; it NEVER means "all of Adana".
     """
+    # RAM scope: empty list => no accessible districts => empty aggregate.
+    if district_ids is not None:
+        district_id_set = set(district_ids)
+        if not district_id_set:
+            domains_ref = client.table("risk_domains").select("id,name,sort_order").eq("is_active", True).order("sort_order").execute().data
+            cats_ref = client.table("risk_categories").select("id,label,sort_order").eq("is_active", True).order("sort_order").execute().data
+            return {
+                "summary": {"schools_count": 0, "total_students": 0, "completed": 0,
+                            "not_entered": 0, "completion_rate": 0, "total_marks": 0},
+                "domains": [{"risk_domain_id": d["id"], "name": d["name"], "sort_order": d["sort_order"],
+                            "student_count": 0, "percentage": 0} for d in domains_ref],
+                "categories": [{"risk_category_id": c["id"], "label": c["label"], "sort_order": c["sort_order"],
+                                "student_count": 0, "percentage": 0} for c in cats_ref],
+            }
+    else:
+        district_id_set = None
+
     subs = _fetch_all(
         lambda a, b: client.table("school_submissions")
         .select("id,school_id,version_no,total_students,completed_students,not_entered_students,total_risk_marks,"
@@ -3055,6 +3107,8 @@ def _aggregate_snapshots(client, academic_year_id, district_id=None, education_l
     latest = {}  # school_id -> submission row
     for s in subs:
         sc = s.get("school") or {}
+        if district_id_set is not None and sc.get("district_id") not in district_id_set:
+            continue
         if district_id is not None and sc.get("district_id") != district_id:
             continue
         if education_level_id is not None and sc.get("education_level_id") != education_level_id:
