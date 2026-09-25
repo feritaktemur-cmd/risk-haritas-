@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, Search, MapPinned } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, Search, MapPinned, BarChart3 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -102,9 +102,14 @@ export default function RamRiskMap() {
               <h1 className="text-lg font-extrabold text-white" data-testid="ramrisk-title">Risk Haritası</h1>
             </div>
           </div>
-          <button onClick={() => navigate("/ram/modules")} data-testid="ramrisk-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
-            <ArrowLeft size={15} /> Modüller
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => navigate("/ram/risk-map/aggregate")} data-testid="ramrisk-aggregate-btn" className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-emerald-500 to-indigo-500 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90">
+              <BarChart3 size={15} /> RAM Geneli Risk Haritası
+            </button>
+            <button onClick={() => navigate("/ram/modules")} data-testid="ramrisk-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+              <ArrowLeft size={15} /> Modüller
+            </button>
+          </div>
         </div>
       </header>
 

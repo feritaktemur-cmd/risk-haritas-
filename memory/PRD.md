@@ -104,7 +104,15 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
     Ortak _build_submission_detail helper'ı admin + RAM detay için tek doğruluk kaynağı.
   * Frontend: RamModules'a "Risk Haritası" kartı; /ram/risk-map (liste) + /ram/risk-map/submissions/:id (detay).
   * Genel Admin ve peer-comparison davranışı korundu.
-- Sonraki: Aşama 4 RAM aggregate Risk Haritası; Aşama 5 "RAM'a Gönder" son kontrol.
+- Sonraki: Aşama 5 "RAM'a Gönder" son kontrol.
+- Aşama 4 RAM aggregate Risk Haritası (TAMAM, Haziran 2026):
+  * Backend: GET /api/ram/risk-map/aggregate (scope=token→ram_id→responsible districts;
+    district_id query sorumlu kümeyle KESİŞTİRİLİR, kapsam dışı → 0; boş scope → 0 veri, asla tüm Adana),
+    GET /api/ram/risk-map/refs (RAM-gated: academic_years + education_levels).
+    Ortak _aggregate_snapshots kullanıldı — yeni matematik yok, latest-version dedup korunuyor.
+  * Frontend: RamAggregateRiskMap.jsx (/ram/risk-map/aggregate); RamRiskMap header'a "RAM Geneli Risk Haritası" butonu.
+    Filtreler: Eğitim Yılı, İlçe (yalnız sorumlu), Kademe. 5 özet kartı + 8 alan + 36 madde (admin UX yeniden kullanıldı).
+  * Genel Admin aggregate ve peer-comparison regresyonu korundu.
 
 ## Backlog / Sonraki olası görevler
 - RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)

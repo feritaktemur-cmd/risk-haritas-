@@ -3351,6 +3351,63 @@ async def admin_risk_map_aggregate(request: Request, academic_year_id: str = Non
     )
 
 
+@api.get("/ram/risk-map/refs")
+async def ram_risk_map_refs(request: Request):
+    """RAM-gated reference lists for the aggregate screen filters.
+
+    Returns academic years and education levels only (no admin-only refs). RAM
+    account required; no scope data leaks (these are global reference lists).
+    """
+    _require_ram_ready(request)
+    client = get_service_client()
+    academic_years = client.table("academic_years").select("id,name,is_active").order("name", desc=True).execute().data
+    education_levels = client.table("education_levels").select("id,name,sort_order").order("sort_order").execute().data
+    return {"academic_years": academic_years, "education_levels": education_levels}
+
+
+@api.get("/ram/risk-map/aggregate")
+async def ram_risk_map_aggregate(request: Request, academic_year_id: str = None,
+                                 district_id: int = None, education_level_id: int = None):
+    """Anonymous aggregated Risk Map for the RAM's OWN responsible districts.
+
+    Authorization is fully server-side: token -> ram_id -> responsible
+    districts. Reuses the shared _aggregate_snapshots core (latest-version
+    selection, SUM(student_count)/SUM(completed_students) math, 8 domains / 36
+    categories) — no new aggregate math. ram_id is NEVER read from the client.
+
+    SECURITY: if the RAM has no responsible districts the result is empty (0
+    schools / 0 data), never an unfiltered all-Adana query. A district_id query
+    is intersected with the responsible set: an out-of-scope district yields 0
+    rows and never widens scope.
+    """
+    _uid, acc = _require_ram_ready(request)
+    client = get_service_client()
+
+    if not academic_year_id:
+        year = _active_academic_year(client)
+        if year is None:
+            raise HTTPException(status_code=400, detail="Eğitim yılı belirlenemedi.")
+        academic_year_id = year["id"]
+
+    responsible = _ram_responsible_district_ids(client, acc["ram_id"])
+    responsible_set = set(responsible)
+
+    if not responsible_set:
+        effective_district_ids = []  # -> empty aggregate, never all Adana
+    elif district_id is not None:
+        # Intersect the requested district with the responsible set.
+        effective_district_ids = [district_id] if district_id in responsible_set else []
+    else:
+        effective_district_ids = list(responsible_set)
+
+    return _aggregate_snapshots(
+        client, academic_year_id,
+        district_ids=effective_district_ids,
+        education_level_id=education_level_id,
+    )
+
+
+
 @api.get("/school/risk-map/peer-comparison")
 async def school_risk_map_peer_comparison(request: Request):
     """Anonymous 8-domain comparison of the caller's education level.

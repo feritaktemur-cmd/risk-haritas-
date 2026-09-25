@@ -18,6 +18,7 @@ import RamModules from "./pages/RamModules";
 import RamActivities from "./pages/RamActivities";
 import RamRiskMap from "./pages/RamRiskMap";
 import RamSubmissionDetail from "./pages/RamSubmissionDetail";
+import RamAggregateRiskMap from "./pages/RamAggregateRiskMap";
 import SchoolLogin from "./pages/SchoolLogin";
 import Modules from "./pages/Modules";
 import SchoolChangePassword from "./pages/SchoolChangePassword";
@@ -93,6 +94,7 @@ export default function App() {
         <Route path="/ram/modules" element={<RamModules />} />
         <Route path="/ram/activities" element={<RamActivities />} />
         <Route path="/ram/risk-map" element={<RamRiskMap />} />
+        <Route path="/ram/risk-map/aggregate" element={<RamAggregateRiskMap />} />
         <Route path="/ram/risk-map/submissions/:submissionId" element={<RamSubmissionDetail />} />
         <Route path="/admin/risk-map/submissions/:submissionId" element={<AdminSubmissionDetail />} />
         <Route path="/school/login" element={<SchoolLogin />} />
