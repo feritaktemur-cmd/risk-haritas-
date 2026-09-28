@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, MapPinned, Users, CheckCircle2, Circle, Percent, ListChecks, Building2 } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, MapPinned, Users, CheckCircle2, Circle, Percent, ListChecks, Building2, FileDown } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { generateRamAggregatePdf } from "../lib/ramAggregatePdf";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -48,6 +49,27 @@ export default function RamAggregateRiskMap() {
   const [error, setError] = useState(null);
   const [domainSort, setDomainSort] = useState("prevalence");
   const [catSort, setCatSort] = useState("density");
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfNotice, setPdfNotice] = useState(null);
+
+  const handleDownloadPdf = async () => {
+    if (pdfBusy) return;
+    setPdfNotice(null);
+    if (!data || (data.summary?.schools_count ?? 0) === 0) {
+      setPdfNotice("Seçili filtrelerde PDF oluşturulacak Risk Haritası verisi bulunamadı.");
+      return;
+    }
+    setPdfBusy(true);
+    try {
+      const yearName = (years.find((y) => y.id === yearId) || {}).name || "";
+      const districtName = districtId ? ((districts.find((d) => String(d.id) === String(districtId)) || {}).name || "") : "";
+      const levelName = educationLevelId ? ((educationLevels.find((l) => String(l.id) === String(educationLevelId)) || {}).name || "") : "";
+      await generateRamAggregatePdf(data, { yearName, districtName, levelName });
+    } catch (_) {
+      setPdfNotice("PDF oluşturulamadı. Lütfen tekrar deneyin.");
+    }
+    setPdfBusy(false);
+  };
 
   const bootstrap = useCallback(async () => {
     const h = await authHeader();
@@ -132,9 +154,14 @@ export default function RamAggregateRiskMap() {
               <h1 className="text-lg font-extrabold text-white" data-testid="ramagg-title">RAM Geneli Risk Haritası</h1>
             </div>
           </div>
-          <button onClick={() => navigate("/ram/risk-map")} data-testid="ramagg-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
-            <ArrowLeft size={15} /> Gönderimler
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={handleDownloadPdf} disabled={pdfBusy} data-testid="ramagg-pdf-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] disabled:opacity-50">
+              {pdfBusy ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />} PDF İndir
+            </button>
+            <button onClick={() => navigate("/ram/risk-map")} data-testid="ramagg-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+              <ArrowLeft size={15} /> Gönderimler
+            </button>
+          </div>
         </div>
       </header>
 
@@ -164,6 +191,12 @@ export default function RamAggregateRiskMap() {
             </select>
           </div>
         </div>
+
+        {pdfNotice && (
+          <div data-testid="ramagg-pdf-notice" className="mb-4 flex items-start gap-2 rounded-xl bg-amber-500/10 p-3 text-sm text-amber-300 ring-1 ring-amber-400/20">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{pdfNotice}</span>
+          </div>
+        )}
 
         {loading ? (
           <div className="grid place-items-center py-16"><Loader2 size={26} className="animate-spin text-emerald-300" /></div>
