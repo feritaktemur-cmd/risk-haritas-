@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, MapPinned, Users, CheckCircle2, Circle, Percent, ListChecks, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, MapPinned, Users, CheckCircle2, Circle, Percent, ListChecks, ChevronDown, ChevronRight, FileDown } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { generateRamSubmissionDetailPdf } from "../lib/ramSubmissionDetailPdf";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -55,6 +56,15 @@ export default function RamSubmissionDetail() {
   const [expanded, setExpanded] = useState({});
   const [domainSort, setDomainSort] = useState("prevalence");
   const [catSort, setCatSort] = useState("density");
+  const [pdfBusy, setPdfBusy] = useState(false);
+
+  const handleDownloadPdf = async () => {
+    if (pdfBusy || !data) return;
+    setPdfBusy(true);
+    try { await generateRamSubmissionDetailPdf(data); }
+    catch (_) { /* keep UI intact; user can retry */ }
+    setPdfBusy(false);
+  };
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -98,9 +108,16 @@ export default function RamSubmissionDetail() {
               <h1 className="text-lg font-extrabold text-white" data-testid="ramdetail-title">Okul Gönderim Detayı</h1>
             </div>
           </div>
-          <button onClick={() => navigate("/ram/risk-map")} data-testid="ramdetail-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
-            <ArrowLeft size={15} /> Risk Haritası Gönderimleri
-          </button>
+          <div className="flex items-center gap-2">
+            {data && !error && (
+              <button onClick={handleDownloadPdf} disabled={pdfBusy} data-testid="ramdetail-pdf-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] disabled:opacity-50">
+                {pdfBusy ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />} PDF İndir
+              </button>
+            )}
+            <button onClick={() => navigate("/ram/risk-map")} data-testid="ramdetail-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
+              <ArrowLeft size={15} /> Risk Haritası Gönderimleri
+            </button>
+          </div>
         </div>
       </header>
 
