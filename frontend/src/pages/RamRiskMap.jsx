@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ArrowLeft, AlertTriangle, Search, MapPinned, BarChart3 } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, Search, MapPinned, BarChart3, FileDown } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { generateRamSubmissionsPdf } from "../lib/ramSubmissionsPdf";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -41,6 +42,8 @@ export default function RamRiskMap() {
   const [district, setDistrict] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [q, setQ] = useState("");
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfNotice, setPdfNotice] = useState(null);
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -80,6 +83,25 @@ export default function RamRiskMap() {
       return true;
     });
   }, [submissions, district, statusFilter, q]);
+
+  const handleDownloadPdf = async () => {
+    if (pdfBusy) return;
+    setPdfNotice(null);
+    if (filtered.length === 0) {
+      setPdfNotice("Seçili filtrelerde PDF oluşturulacak gönderim bulunamadı.");
+      return;
+    }
+    setPdfBusy(true);
+    try {
+      await generateRamSubmissionsPdf({
+        submissions: filtered,
+        filters: { district, status: statusFilter, q },
+      });
+    } catch (_) {
+      setPdfNotice("PDF oluşturulamadı. Lütfen tekrar deneyin.");
+    }
+    setPdfBusy(false);
+  };
 
   if (!ready) {
     return (
@@ -142,7 +164,21 @@ export default function RamRiskMap() {
                 <option value="all">Tüm Durumlar</option>
                 {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
+              <button
+                onClick={handleDownloadPdf}
+                disabled={pdfBusy}
+                data-testid="ramrisk-pdf-btn"
+                className="ml-auto inline-flex items-center gap-2 rounded-xl bg-white/[0.06] px-4 py-2.5 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] disabled:opacity-50"
+              >
+                {pdfBusy ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />} PDF İndir
+              </button>
             </div>
+
+            {pdfNotice && (
+              <div data-testid="ramrisk-pdf-notice" className="mb-4 flex items-start gap-2 rounded-xl bg-amber-500/10 p-3 text-sm text-amber-300 ring-1 ring-amber-400/20">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{pdfNotice}</span>
+              </div>
+            )}
 
             {submissions.length === 0 ? (
               <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center text-sm text-slate-400" data-testid="ramrisk-empty">
