@@ -14,6 +14,79 @@ Terimler:
 from math import sqrt
 
 
+class RibaAnswerError(ValueError):
+    """Bir RİBA form cevap setindeki bütünlük hatası (geçersiz/eksik cevap)."""
+
+
+VALID_OPTIONS = ("A", "B")
+
+
+def _target_for_answer(question, selected_option):
+    """Bir cevabın seçilen A/B değerine göre hedef (target_id) karşılığını döner.
+
+    Yalnız 'A' veya 'B' kabul edilir; başka bir değerde açık hata üretilir.
+    İlgili seçeneğin target_id'si tanımsızsa açık hata üretilir.
+    """
+    if selected_option not in VALID_OPTIONS:
+        raise RibaAnswerError(
+            f"Geçersiz seçim: {selected_option!r}. Yalnız 'A' veya 'B' kabul edilir."
+        )
+    key = "option_a_target_id" if selected_option == "A" else "option_b_target_id"
+    target_id = question.get(key)
+    if target_id is None:
+        raise RibaAnswerError(
+            f"Soru için {key} tanımsız (question_id={question.get('question_id')!r})."
+        )
+    return target_id
+
+
+def build_target_frequencies(questions, answers):
+    """Bir RİBA formundaki cevaplardan hedef frekanslarını üretir.
+
+    questions: her biri {question_id, option_a_target_id, option_b_target_id}
+               içeren iterable (formun TÜM soruları).
+    answers:   her biri {question_id, selected_option} ('A'|'B') içeren iterable.
+
+    Dönüş: {target_id: frekans} sözlüğü. Her geçerli cevap, seçilen A/B'ye ait
+    hedefin frekansını 1 artırır. Aynı hedef farklı sorularda seçilmişse her
+    seçim ayrı ayrı eklenir.
+
+    Bütünlük kuralları (hepsi açık hata üretir; sessizce devam edilmez):
+    - Geçersiz A/B seçimi -> RibaAnswerError
+    - Cevaplarda formda olmayan question_id -> RibaAnswerError
+    - Aynı soru için birden fazla cevap -> RibaAnswerError
+    - Cevaplanmamış/eksik soru (tam form değil) -> RibaAnswerError
+    """
+    q_by_id = {}
+    for q in questions:
+        qid = q.get("question_id")
+        if qid is None:
+            raise RibaAnswerError("Soru kaydında question_id tanımsız.")
+        if qid in q_by_id:
+            raise RibaAnswerError(f"Yinelenen soru tanımı: question_id={qid!r}.")
+        q_by_id[qid] = q
+
+    frequencies = {}
+    answered = set()
+    for a in answers:
+        qid = a.get("question_id")
+        if qid not in q_by_id:
+            raise RibaAnswerError(f"Formda olmayan soruya cevap: question_id={qid!r}.")
+        if qid in answered:
+            raise RibaAnswerError(f"Aynı soru için birden fazla cevap: question_id={qid!r}.")
+        answered.add(qid)
+        target_id = _target_for_answer(q_by_id[qid], a.get("selected_option"))
+        frequencies[target_id] = frequencies.get(target_id, 0) + 1
+
+    missing = set(q_by_id) - answered
+    if missing:
+        raise RibaAnswerError(
+            f"Eksik/cevapsız soru var; tam form değil. Eksik question_id sayısı: {len(missing)}."
+        )
+
+    return frequencies
+
+
 # --- Kademe (education_level_id) sabitleri ---
 # Migration 019'daki form dağılımıyla uyumlu:
 #   1 = Okul Öncesi (yalnız veli, öğretmen)
