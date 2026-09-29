@@ -17,6 +17,7 @@ from supabase_client import get_service_client, get_anon_client, SUPABASE_URL
 from excel_preview import analyze_rows, load_reference, plan_import, VALID_MANAGEMENT_TYPES
 from students_excel import analyze_student_rows
 from admin_accounts import generate_username, generate_temp_password, synth_email_for
+from riba_link_token import generate_link_token, hash_link_token, RibaLinkTokenError
 import re as _re
 
 
@@ -1704,6 +1705,21 @@ async def school_riba_activate_application(application_id: str, request: Request
             detail="Bu uygulama için beklenmeyen form bağlantıları mevcut. Aktifleştirme güvenli değil.",
         )
 
+    # Do not silently overwrite: reject if access links already exist for this draft.
+    existing_links = (
+        client.table("riba_access_links")
+        .select("id")
+        .eq("application_id", application_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if existing_links:
+        raise HTTPException(
+            status_code=409,
+            detail="Bu uygulama için beklenmeyen erişim linkleri mevcut. Aktifleştirme güvenli değil.",
+        )
+
     # Expected participant types by education level.
     if education_level_id == 1:
         expected_types = ["parent", "teacher"]
@@ -1734,6 +1750,25 @@ async def school_riba_activate_application(application_id: str, request: Request
             )
         form_ids.append(forms[0]["id"])
 
+    # Generate deterministic raw tokens BEFORE any DB write. If RIBA_LINK_SECRET
+    # is missing/empty the helper fails closed here, leaving zero half-written data.
+    try:
+        raw_tokens = {pt: generate_link_token(application_id, pt) for pt in expected_types}
+    except RibaLinkTokenError:
+        logger.exception("riba access link token generation failed (fail-closed)")
+        raise HTTPException(status_code=500, detail="RİBA erişim linkleri üretilemedi. Lütfen sistem yöneticinize başvurun.")
+
+    def _activation_cleanup():
+        # Remove ONLY what this call created; keep the draft intact.
+        try:
+            client.table("riba_access_links").delete().eq("application_id", application_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba access link cleanup failed")
+        try:
+            client.table("riba_application_forms").delete().eq("application_id", application_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba form binding cleanup failed")
+
     # Bind the resolved forms (after all validations pass).
     try:
         client.table("riba_application_forms").insert(
@@ -1741,11 +1776,27 @@ async def school_riba_activate_application(application_id: str, request: Request
         ).execute()
     except Exception:  # noqa: BLE001
         logger.exception("riba form binding failed; cleaning up")
-        try:
-            client.table("riba_application_forms").delete().eq("application_id", application_id).execute()
-        except Exception:  # noqa: BLE001
-            logger.exception("riba form binding cleanup failed")
+        _activation_cleanup()
         raise HTTPException(status_code=500, detail="RİBA formları bağlanamadı. Lütfen tekrar deneyin.")
+
+    # Create one access link per expected participant type (token_hash only; raw
+    # token is NEVER stored and is re-derivable later via the same helper).
+    try:
+        client.table("riba_access_links").insert(
+            [
+                {
+                    "application_id": application_id,
+                    "participant_type": pt,
+                    "token_hash": hash_link_token(raw_tokens[pt]),
+                    "is_active": True,
+                }
+                for pt in expected_types
+            ]
+        ).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("riba access link creation failed; cleaning up")
+        _activation_cleanup()
+        raise HTTPException(status_code=500, detail="RİBA erişim linkleri oluşturulamadı. Lütfen tekrar deneyin.")
 
     # Flip to active (conditional on still being draft) as the LAST step.
     opened_at = datetime.now(timezone.utc).isoformat()
@@ -1762,12 +1813,9 @@ async def school_riba_activate_application(application_id: str, request: Request
     except Exception:  # noqa: BLE001
         updated = None
     if not updated:
-        # Roll back ONLY the bindings created in this call; keep the draft intact.
-        logger.exception("riba activation status update failed; rolling back bindings")
-        try:
-            client.table("riba_application_forms").delete().eq("application_id", application_id).execute()
-        except Exception:  # noqa: BLE001
-            logger.exception("riba activation rollback failed")
+        # Roll back ONLY what this call created; keep the draft intact.
+        logger.exception("riba activation status update failed; rolling back")
+        _activation_cleanup()
         raise HTTPException(status_code=500, detail="RİBA uygulaması aktifleştirilemedi. Lütfen tekrar deneyin.")
 
     return {
@@ -1776,6 +1824,7 @@ async def school_riba_activate_application(application_id: str, request: Request
         "status": "active",
         "opened_at": opened_at,
         "bound_form_count": len(form_ids),
+        "access_tokens": {pt: raw_tokens[pt] for pt in expected_types},
     }
 
 
