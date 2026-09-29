@@ -1,13 +1,25 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import axios from "axios";
-import { ClipboardList, Loader2, AlertTriangle, GraduationCap, CalendarDays, Layers, Users } from "lucide-react";
+import { ClipboardList, Loader2, AlertTriangle, GraduationCap, CalendarDays, Users, CheckCircle2 } from "lucide-react";
 import { CorporateFooter } from "../components/CorporateFooter";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const PARTICIPANT_LABELS = { student: "Öğrenci", parent: "Veli", teacher: "Öğretmen" };
 const GENDER_LABELS = { K: "Kız", E: "Erkek" };
+
+function getOrCreateDeviceToken(applicationId, participantType) {
+  const key = `riba_device_${applicationId}_${participantType}`;
+  let tok = localStorage.getItem(key);
+  if (!tok) {
+    const arr = new Uint8Array(32);
+    (window.crypto || window.msCrypto).getRandomValues(arr);
+    tok = Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem(key, tok);
+  }
+  return tok;
+}
 
 function MetaRow({ icon: Icon, label, value }) {
   if (!value) return null;
@@ -29,6 +41,9 @@ export default function RibaRespond() {
   const [selectedClass, setSelectedClass] = useState("");
   const [gender, setGender] = useState("");
   const [answers, setAnswers] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [notice, setNotice] = useState(null); // {type: 'warn'|'error', text}
 
   useEffect(() => {
     let active = true;
@@ -52,6 +67,64 @@ export default function RibaRespond() {
   }, [token]);
 
   const setAnswer = (qid, opt) => setAnswers((prev) => ({ ...prev, [qid]: opt }));
+
+  const scrollToTestId = (tid) => {
+    const el = document.querySelector(`[data-testid="${tid}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const handleSubmit = async () => {
+    if (submitting) return;
+    setNotice(null);
+    const qs = form?.questions || [];
+
+    if (!selectedClass) {
+      setNotice({ type: "warn", text: "Lütfen sınıf/şube seçiniz." });
+      scrollToTestId("riba-class-select");
+      return;
+    }
+    if (form?.requires_gender && !gender) {
+      setNotice({ type: "warn", text: "Lütfen cinsiyet seçiniz." });
+      scrollToTestId("riba-gender-K");
+      return;
+    }
+    const firstUnanswered = qs.find((q) => !answers[q.question_id]);
+    if (firstUnanswered) {
+      setNotice({ type: "warn", text: "Lütfen tüm soruları cevaplayınız." });
+      scrollToTestId(`riba-question-${firstUnanswered.question_no}`);
+      return;
+    }
+
+    const body = {
+      school_class_id: selectedClass,
+      gender,
+      answers: qs.map((q) => ({ question_id: q.question_id, selected_option: answers[q.question_id] })),
+    };
+    if (form?.participant_type === "parent" || form?.participant_type === "teacher") {
+      body.device_token = getOrCreateDeviceToken(form.application_id, form.participant_type);
+    }
+
+    setSubmitting(true);
+    try {
+      await axios.post(`${API}/riba/respond/${token}`, body);
+      setSubmitted(true);
+    } catch (err) {
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+      let msg;
+      if (status === 409 && detail === "Bu cihazdan bu ankete daha önce yanıt gönderilmiş.") {
+        msg = detail;
+      } else if (status === 409) {
+        msg = "Bu anket şu anda yanıt kabul etmiyor.";
+      } else if (status === 404) {
+        msg = "Bu anket bağlantısı geçersiz veya artık kullanılamıyor.";
+      } else {
+        msg = "Yanıt gönderilirken bir sorun oluştu. Lütfen tekrar deneyiniz.";
+      }
+      setNotice({ type: "error", text: msg });
+    }
+    setSubmitting(false);
+  };
 
   if (loading) {
     return (
@@ -84,6 +157,23 @@ export default function RibaRespond() {
   const answeredCount = questions.filter((q) => answers[q.question_id]).length;
   const totalCount = questions.length;
   const participantLabel = PARTICIPANT_LABELS[form?.participant_type] || form?.participant_type;
+
+  if (submitted) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(16,185,129,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(99,102,241,0.10),transparent)] px-6">
+        <div className="w-full max-w-md text-center">
+          <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/20">
+            <CheckCircle2 size={28} />
+          </div>
+          <div data-testid="riba-success" className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur">
+            <p className="text-lg font-extrabold text-white">Yanıtınız kaydedildi.</p>
+            <p className="mt-2 text-sm text-slate-300">RİBA formunu doldurduğunuz için teşekkür ederiz.</p>
+          </div>
+          <CorporateFooter className="mt-8" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen w-full bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(16,185,129,0.12),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(99,102,241,0.10),transparent)]">
@@ -199,17 +289,31 @@ export default function RibaRespond() {
           ))}
         </div>
 
-        {/* Submit (disabled in this task) */}
-        <div className="mt-6 text-center">
+        {/* Submit */}
+        <div className="mt-6">
+          {notice && (
+            <div
+              data-testid="riba-submit-notice"
+              className={`mb-3 flex items-start gap-2 rounded-xl p-3 text-sm ring-1 ${
+                notice.type === "error"
+                  ? "bg-rose-500/10 text-rose-200 ring-rose-400/20"
+                  : "bg-amber-500/10 text-amber-100 ring-amber-400/20"
+              }`}
+            >
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>{notice.text}</span>
+            </div>
+          )}
           <button
             type="button"
-            disabled
-            data-testid="riba-submit-disabled"
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-3 text-sm font-bold text-white opacity-50"
+            onClick={handleSubmit}
+            disabled={submitting}
+            data-testid="riba-submit"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:opacity-50"
           >
-            Yanıtları Gönder
+            {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
+            {submitting ? "Gönderiliyor…" : "Yanıtları Gönder"}
           </button>
-          <p className="mt-2 text-xs text-slate-400">Form gönderme sonraki adımda etkinleştirilecektir.</p>
         </div>
 
         <CorporateFooter className="mt-10" />
