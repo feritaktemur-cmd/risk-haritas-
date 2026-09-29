@@ -1915,6 +1915,160 @@ async def school_riba_get_access_links(application_id: str, request: Request):
     }
 
 
+@api.get("/riba/respond/{token}")
+async def riba_public_respond_form(token: str, request: Request):
+    """PUBLIC (no auth) read-only RİBA form fetch via access-link token.
+
+    Access is granted ONLY by the token in the URL. Returns the minimum data
+    needed to render the anonymous form. NEVER exposes A/B target mappings,
+    MEB codes, target IDs, scoring/weights, token_hash, school_id or other
+    participant types' forms. Creates/modifies/deletes NOTHING.
+    """
+    client = get_service_client()
+
+    if not token or not str(token).strip():
+        raise HTTPException(status_code=404, detail="Geçersiz veya süresi dolmuş bağlantı.")
+
+    # Resolve the access link by token hash (hashing needs no secret).
+    token_hash = hash_link_token(token)
+    link_rows = (
+        client.table("riba_access_links")
+        .select("application_id,participant_type,is_active")
+        .eq("token_hash", token_hash)
+        .limit(1)
+        .execute()
+        .data
+    )
+    link = link_rows[0] if link_rows else None
+    if link is None or not link.get("is_active"):
+        raise HTTPException(status_code=404, detail="Geçersiz veya süresi dolmuş bağlantı.")
+
+    application_id = link["application_id"]
+    participant_type = link["participant_type"]
+
+    # Application must be active to open the form.
+    app_rows = (
+        client.table("riba_applications")
+        .select("id,school_id,academic_year_id,name,status")
+        .eq("id", application_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = app_rows[0] if app_rows else None
+    if app_row is None:
+        # Link exists but application missing -> integrity problem.
+        raise HTTPException(status_code=500, detail="Form verisi okunamadı. Lütfen daha sonra tekrar deneyin.")
+    if app_row["status"] != "active":
+        raise HTTPException(status_code=409, detail="Bu anket şu anda yanıtlanamıyor.")
+
+    # Resolve the AUTHORITATIVE bound form for this participant type. The form
+    # pinned at activation is authoritative; do NOT re-pick by current is_active.
+    bound = (
+        client.table("riba_application_forms")
+        .select("form_id")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    bound_form_ids = [b["form_id"] for b in bound]
+    matching_form = None
+    if bound_form_ids:
+        forms = (
+            client.table("riba_forms")
+            .select("id,participant_type,version,education_level_id")
+            .in_("id", bound_form_ids)
+            .eq("participant_type", participant_type)
+            .execute()
+            .data
+        )
+        if len(forms) > 1:
+            raise HTTPException(status_code=500, detail="Form verisi tutarsız. Lütfen daha sonra tekrar deneyin.")
+        matching_form = forms[0] if forms else None
+    if matching_form is None:
+        raise HTTPException(status_code=500, detail="Bu katılımcı türü için form bulunamadı. Lütfen daha sonra tekrar deneyin.")
+
+    form_id = matching_form["id"]
+
+    # School display + education level (public-safe fields only).
+    school_rows = (
+        client.table("schools")
+        .select("name,education_level:education_levels(name)")
+        .eq("id", app_row["school_id"])
+        .limit(1)
+        .execute()
+        .data
+    )
+    school_name = school_rows[0]["name"] if school_rows else None
+    education_level = (school_rows[0].get("education_level") or {}).get("name") if school_rows else None
+
+    # Academic year display name.
+    ay_rows = (
+        client.table("academic_years")
+        .select("name")
+        .eq("id", app_row["academic_year_id"])
+        .limit(1)
+        .execute()
+        .data
+    )
+    academic_year = ay_rows[0]["name"] if ay_rows else None
+
+    # Selectable classes for this application (id + display).
+    ac_rows = (
+        client.table("riba_application_classes")
+        .select("school_class:school_classes(id,level,branch)")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    classes = []
+    for r in ac_rows:
+        sc = r.get("school_class") or {}
+        if sc.get("id") is not None:
+            classes.append({
+                "id": sc["id"],
+                "level": sc["level"],
+                "branch": sc["branch"],
+                "name": f"{sc['level']}/{sc['branch']}",
+            })
+    classes.sort(key=lambda c: (c["level"], c["branch"]))
+
+    # Questions from the bound form ONLY (official texts, no target/M-code data).
+    q_rows = (
+        client.table("riba_questions")
+        .select("id,question_no,option_a_text,option_b_text")
+        .eq("form_id", form_id)
+        .order("question_no")
+        .execute()
+        .data
+    )
+    questions = [
+        {
+            "question_id": q["id"],
+            "question_no": q["question_no"],
+            "option_a_text": q["option_a_text"],
+            "option_b_text": q["option_b_text"],
+        }
+        for q in q_rows
+    ]
+
+    return {
+        "application_id": application_id,
+        "application_name": app_row["name"],
+        "participant_type": participant_type,
+        "school_name": school_name,
+        "academic_year": academic_year,
+        "education_level": education_level,
+        "form_id": form_id,
+        "form_version": matching_form["version"],
+        "classes": classes,
+        "questions": questions,
+        "requires_gender": True,
+        "gender_options": ["K", "E"],
+    }
+
+
+
 
 
 
