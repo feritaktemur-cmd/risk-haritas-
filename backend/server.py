@@ -6,6 +6,7 @@ implemented separately later.
 """
 import logging
 import os
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -2116,8 +2117,8 @@ async def riba_public_submit_response(token: str, request: Request):
         raise HTTPException(status_code=409, detail="Bu anket şu anda yanıtlanamıyor.")
 
     # First package supports students only; parent/teacher need a device token.
-    if participant_type != "student":
-        raise HTTPException(status_code=409, detail="Bu katılımcı türü için yanıt gönderimi henüz desteklenmiyor.")
+    # First package supported students only. Parent/teacher now supported with a
+    # required device token (anonymous browser/device duplicate protection).
 
     # Parse client body (only allowed fields are read; others ignored).
     body = await request.json() or {}
@@ -2196,6 +2197,18 @@ async def riba_public_submit_response(token: str, request: Request):
     if set(answered.keys()) != form_question_ids:
         raise HTTPException(status_code=400, detail="Tüm soruların cevaplanması zorunludur.")
 
+    # Device token: required for parent/teacher; ignored for student (NULL).
+    # The raw token is NEVER stored; only its SHA-256 hash is persisted.
+    device_token_hash = None
+    if participant_type in ("parent", "teacher"):
+        device_token = body.get("device_token")
+        if not isinstance(device_token, str) or not device_token.strip():
+            raise HTTPException(status_code=400, detail="Cihaz doğrulaması eksik. Lütfen sayfayı yenileyip tekrar deneyin.")
+        device_token = device_token.strip()
+        if len(device_token) > 512:
+            raise HTTPException(status_code=400, detail="Geçersiz cihaz doğrulama değeri.")
+        device_token_hash = hashlib.sha256(device_token.encode("utf-8")).hexdigest()
+
     # Write: anonymous response header, then answers. Compensating cleanup.
     response_id = None
     try:
@@ -2206,7 +2219,7 @@ async def riba_public_submit_response(token: str, request: Request):
             "participant_type": participant_type,
             "gender": gender,
             "student_code_id": None,
-            "device_token_hash": None,
+            "device_token_hash": device_token_hash,
         }).execute().data
         response_id = resp[0]["id"]
 
@@ -2214,14 +2227,20 @@ async def riba_public_submit_response(token: str, request: Request):
             {"response_id": response_id, "question_id": qid, "selected_option": opt}
             for qid, opt in answered.items()
         ]).execute()
-    except Exception:  # noqa: BLE001
-        logger.exception("riba response submission failed; cleaning up")
+    except Exception as e:  # noqa: BLE001
+        # NOTE: the raw DB error may contain the token_hash value; never log it.
+        msg = str(e).lower()
+        is_duplicate = "uq_riba_responses_device_submission" in msg or "23505" in msg
         if response_id:
             try:
                 # Children cascade on delete of the parent response row.
                 client.table("riba_responses").delete().eq("id", response_id).execute()
             except Exception:  # noqa: BLE001
-                logger.exception("riba response cleanup failed")
+                logger.error("riba response cleanup failed")
+        if is_duplicate:
+            logger.info("riba duplicate device submission blocked (participant_type=%s)", participant_type)
+            raise HTTPException(status_code=409, detail="Bu cihazdan bu ankete daha önce yanıt gönderilmiş.")
+        logger.error("riba response submission failed")
         raise HTTPException(status_code=500, detail="Yanıtınız kaydedilemedi. Lütfen tekrar deneyin.")
 
     return {"success": True, "message": "Yanıtınız kaydedildi."}
