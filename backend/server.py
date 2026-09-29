@@ -1620,6 +1620,166 @@ async def school_riba_create_application(request: Request):
     }
 
 
+@api.post("/school/riba/applications/{application_id}/activate")
+async def school_riba_activate_application(application_id: str, request: Request):
+    """Activate a DRAFT RİBA application: pin the active form versions and flip
+    the application to 'active'. school_id is derived server-side; only draft
+    applications owned by the logged-in school can be activated. This endpoint
+    ONLY pins forms (riba_application_forms) and sets status/opened_at; access
+    links/tokens/QR, student codes, answers and results are out of scope.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    # Ownership + draft check (never trust the path for scope).
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,academic_year_id,status")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+    if app_row["status"] != "draft":
+        raise HTTPException(status_code=409, detail="Yalnızca taslak durumundaki uygulamalar aktifleştirilebilir.")
+
+    # Education level (RİBA only for 1..4).
+    srow = (
+        client.table("schools")
+        .select("education_level_id")
+        .eq("id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    education_level_id = srow[0]["education_level_id"] if srow else None
+    if education_level_id not in (1, 2, 3, 4):
+        raise HTTPException(
+            status_code=400,
+            detail="Bu eğitim kademesi için RİBA uygulaması aktifleştirilemez.",
+        )
+
+    # At least one bound class, and every bound class must still belong to this school.
+    bound_classes = (
+        client.table("riba_application_classes")
+        .select("school_class_id")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    if not bound_classes:
+        raise HTTPException(status_code=400, detail="Aktifleştirmek için en az bir sınıf bağlı olmalıdır.")
+    bound_class_ids = [r["school_class_id"] for r in bound_classes]
+    owned = (
+        client.table("school_classes")
+        .select("id")
+        .eq("school_id", school_id)
+        .in_("id", bound_class_ids)
+        .execute()
+        .data
+    )
+    if {r["id"] for r in owned} != set(bound_class_ids):
+        raise HTTPException(
+            status_code=400,
+            detail="Bağlı sınıflardan biri artık bu okula ait değil. Aktifleştirilemez.",
+        )
+
+    # Do not silently overwrite: reject if forms are already bound to this draft.
+    existing_binding = (
+        client.table("riba_application_forms")
+        .select("id")
+        .eq("application_id", application_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if existing_binding:
+        raise HTTPException(
+            status_code=409,
+            detail="Bu uygulama için beklenmeyen form bağlantıları mevcut. Aktifleştirme güvenli değil.",
+        )
+
+    # Expected participant types by education level.
+    if education_level_id == 1:
+        expected_types = ["parent", "teacher"]
+    else:
+        expected_types = ["student", "parent", "teacher"]
+
+    # Resolve EXACTLY ONE active form per expected participant type.
+    form_ids = []
+    for ptype in expected_types:
+        forms = (
+            client.table("riba_forms")
+            .select("id")
+            .eq("education_level_id", education_level_id)
+            .eq("participant_type", ptype)
+            .eq("is_active", True)
+            .execute()
+            .data
+        )
+        if len(forms) == 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{ptype}' için aktif RİBA formu bulunamadı. Aktifleştirilemez.",
+            )
+        if len(forms) > 1:
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{ptype}' için birden fazla aktif RİBA formu var. Aktifleştirilemez.",
+            )
+        form_ids.append(forms[0]["id"])
+
+    # Bind the resolved forms (after all validations pass).
+    try:
+        client.table("riba_application_forms").insert(
+            [{"application_id": application_id, "form_id": fid} for fid in form_ids]
+        ).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("riba form binding failed; cleaning up")
+        try:
+            client.table("riba_application_forms").delete().eq("application_id", application_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba form binding cleanup failed")
+        raise HTTPException(status_code=500, detail="RİBA formları bağlanamadı. Lütfen tekrar deneyin.")
+
+    # Flip to active (conditional on still being draft) as the LAST step.
+    opened_at = datetime.now(timezone.utc).isoformat()
+    try:
+        updated = (
+            client.table("riba_applications")
+            .update({"status": "active", "opened_at": opened_at})
+            .eq("id", application_id)
+            .eq("school_id", school_id)
+            .eq("status", "draft")
+            .execute()
+            .data
+        )
+    except Exception:  # noqa: BLE001
+        updated = None
+    if not updated:
+        # Roll back ONLY the bindings created in this call; keep the draft intact.
+        logger.exception("riba activation status update failed; rolling back bindings")
+        try:
+            client.table("riba_application_forms").delete().eq("application_id", application_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba activation rollback failed")
+        raise HTTPException(status_code=500, detail="RİBA uygulaması aktifleştirilemedi. Lütfen tekrar deneyin.")
+
+    return {
+        "success": True,
+        "application_id": application_id,
+        "status": "active",
+        "opened_at": opened_at,
+        "bound_form_count": len(form_ids),
+    }
+
+
+
 
 @api.get("/school/students")
 async def school_students_list(request: Request, q: str = None):
