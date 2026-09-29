@@ -176,6 +176,25 @@ def compute_asp(education_level_id, group_scores):
 
 
 
+def _validate_frequency(group, target_id, value):
+    """Frekans değerini doğrular: tam sayı (bool değil) ve >= 0 olmalı.
+
+    bool, int alt sınıfı olduğundan True/False açıkça reddedilir. Negatif, float
+    veya string gibi geçersiz değerler açık ValueError üretir.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"'{group}' grubunda geçersiz frekans türü (target_id={target_id!r}): "
+            f"{value!r}. Frekans tam sayı (int) olmalıdır."
+        )
+    if value < 0:
+        raise ValueError(
+            f"'{group}' grubunda negatif frekans (target_id={target_id!r}): {value!r}. "
+            f"Frekans 0'dan büyük eşit olmalıdır."
+        )
+
+
+
 def _group_target_scores(target_ids, freq_map):
     """Bir grup için tam hedef kümesi üzerinden istatistikleri hesaplar.
 
@@ -226,6 +245,10 @@ def compute_class_target_results(education_level_id, target_ids, group_frequenci
         raise ValueError(f"Bilinmeyen education_level_id: {education_level_id!r}.")
 
     targets = list(target_ids)
+    if not targets:
+        raise ValueError("target_ids boş olamaz.")
+    if len(set(targets)) != len(targets):
+        raise ValueError("target_ids içinde yinelenen target_id var.")
     relevant_groups = list(weights.keys())
 
     # Her ilgili grup için istatistikleri hesapla (varsa).
@@ -240,6 +263,8 @@ def compute_class_target_results(education_level_id, target_ids, group_frequenci
             raise ValueError(
                 f"'{group}' frekanslarında tam hedef kümesinde olmayan target_id var: {stray}."
             )
+        for tid, f in freq_map.items():
+            _validate_frequency(group, tid, f)
         group_stats[group] = _group_target_scores(targets, freq_map)
 
     results = {}
