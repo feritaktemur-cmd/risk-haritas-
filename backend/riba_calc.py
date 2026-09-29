@@ -289,3 +289,82 @@ def compute_class_target_results(education_level_id, target_ids, group_frequenci
         results[t] = row
 
     return results
+
+
+
+def _validate_asp(target_id, value):
+    """Sınıf ASP değerini doğrular: None ya da sayısal (int/float, bool DEĞİL).
+
+    bool, int alt sınıfı olduğundan reddedilir. String vb. sayısal olmayan
+    değerler açık ValueError üretir.
+    """
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"Geçersiz sınıf ASP değeri (target_id={target_id!r}): {value!r}. "
+            f"ASP sayısal (int/float) veya None olmalıdır."
+        )
+
+
+def compute_school_target_results(target_ids, class_asps):
+    """MEB RİBA okul sonucu: her hedef için sınıf ASP'lerinin okul düzeyi özeti.
+
+    target_ids: okul/kademe için TAM target_id kümesi (iterable).
+    class_asps: her biri bir sınıfa ait {target_id: asp|None} eşlemesi olan iterable.
+                Her sınıf sözlüğü, ilgili hedeflerin o sınıftaki ASP'sini taşır;
+                hesaplanamayan hedefler için ASP None olabilir.
+
+    Her target_id için:
+    - Yalnız None olmayan sınıf ASP değerleri kullanılır (ham cevaplar okul
+      düzeyinde yeniden birleştirilmez; sınıf büyüklüğü/öğrenci sayısı ağırlık
+      olarak KULLANILMAZ).
+    - class_count = ortalamaya dâhil edilen geçerli sınıf ASP sayısı.
+    - average_asp = geçerli sınıf ASP'lerinin basit aritmetik ortalaması.
+    - Hiç geçerli ASP yoksa: class_count=0, average_asp=None, rank=None.
+
+    Sıralama (rank): average_asp hesaplanabilen hedefler arasında RANK.EQ(...,0)
+    azalan davranışı. En yüksek ortalama rank 1; eşit değerler aynı rank; eşitlik
+    sonrası sıra atlanır (80,70,70,60 -> 1,2,2,4). average_asp=None -> rank None.
+    Eşitlik karşılaştırmasında yuvarlama yapılmaz; gerçek değerler kullanılır.
+
+    Dönüş: {target_id: {"class_count", "average_asp", "rank"}}
+    """
+    targets = list(target_ids)
+    if not targets:
+        raise ValueError("target_ids boş olamaz.")
+    if len(set(targets)) != len(targets):
+        raise ValueError("target_ids içinde yinelenen target_id var.")
+    target_set = set(targets)
+
+    # Her hedef için geçerli (None olmayan) sınıf ASP'lerini topla.
+    valid_by_target = {t: [] for t in targets}
+    for class_map in class_asps:
+        stray = set(class_map) - target_set
+        if stray:
+            raise ValueError(
+                f"Sınıf ASP verisinde tam hedef kümesinde olmayan target_id var: {stray}."
+            )
+        for tid, asp in class_map.items():
+            _validate_asp(tid, asp)
+            if asp is not None:
+                valid_by_target[tid].append(asp)
+
+    # class_count ve average_asp.
+    averages = {}
+    results = {}
+    for t in targets:
+        vals = valid_by_target[t]
+        count = len(vals)
+        avg = (sum(vals) / count) if count > 0 else None
+        averages[t] = avg
+        results[t] = {"class_count": count, "average_asp": avg, "rank": None}
+
+    # RANK.EQ azalan (0): rank = 1 + (kesin olarak daha büyük ortalama sayısı).
+    ranked_values = [a for a in averages.values() if a is not None]
+    for t, avg in averages.items():
+        if avg is None:
+            continue
+        results[t]["rank"] = 1 + sum(1 for other in ranked_values if other > avg)
+
+    return results
