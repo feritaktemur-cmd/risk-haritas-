@@ -1828,6 +1828,94 @@ async def school_riba_activate_application(application_id: str, request: Request
     }
 
 
+@api.get("/school/riba/applications/{application_id}/access-links")
+async def school_riba_get_access_links(application_id: str, request: Request):
+    """Re-derive and return the current RİBA access tokens for an application.
+
+    Read-only: creates/modifies/deletes NOTHING. Tokens are re-generated
+    deterministically via the same helper and verified against the stored
+    token_hash (fail-closed if RIBA_LINK_SECRET is missing/changed). Only
+    is_active links are returned. Scope is strictly token->school_id.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    # Ownership check (never trust the path for scope).
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,status")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+    if app_row["status"] == "draft":
+        raise HTTPException(status_code=409, detail="Bu uygulama henüz aktifleştirilmedi; erişim linki bulunmuyor.")
+
+    # Active links for this application.
+    links = (
+        client.table("riba_access_links")
+        .select("participant_type,token_hash,is_active")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    active_links = [l for l in links if l.get("is_active")]
+    if not active_links:
+        raise HTTPException(status_code=409, detail="Bu uygulama için aktif erişim linki bulunmuyor.")
+
+    # The active-link participant types must match the bound form participant types.
+    bound_forms = (
+        client.table("riba_application_forms")
+        .select("form_id")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    bound_form_ids = [b["form_id"] for b in bound_forms]
+    bound_types = set()
+    if bound_form_ids:
+        form_rows = (
+            client.table("riba_forms")
+            .select("participant_type")
+            .in_("id", bound_form_ids)
+            .execute()
+            .data
+        )
+        bound_types = {f["participant_type"] for f in form_rows}
+    link_types = {l["participant_type"] for l in active_links}
+    if link_types != bound_types:
+        raise HTTPException(
+            status_code=500,
+            detail="Erişim linkleri ile bağlı formlar uyumsuz. Lütfen sistem yöneticinize başvurun.",
+        )
+
+    # Re-derive each token and verify against the stored hash (fail-closed).
+    access_tokens = {}
+    for link in active_links:
+        ptype = link["participant_type"]
+        try:
+            raw = generate_link_token(application_id, ptype)
+        except RibaLinkTokenError:
+            logger.exception("riba access link token re-derivation failed (fail-closed)")
+            raise HTTPException(status_code=500, detail="RİBA erişim linkleri okunamadı. Lütfen sistem yöneticinize başvurun.")
+        if hash_link_token(raw) != link["token_hash"]:
+            logger.error("riba access link hash mismatch for participant_type=%s", ptype)
+            raise HTTPException(status_code=500, detail="RİBA erişim linki doğrulanamadı. Lütfen sistem yöneticinize başvurun.")
+        access_tokens[ptype] = raw
+
+    return {
+        "application_id": application_id,
+        "access_tokens": access_tokens,
+    }
+
+
+
 
 
 @api.get("/school/students")
