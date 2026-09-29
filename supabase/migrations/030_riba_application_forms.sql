@@ -20,8 +20,6 @@ CREATE TABLE public.riba_application_forms (
     CONSTRAINT uq_riba_application_forms_application_form
         UNIQUE (application_id, form_id)
 );
-CREATE INDEX idx_riba_application_forms_application
-    ON public.riba_application_forms (application_id);
 CREATE INDEX idx_riba_application_forms_form
     ON public.riba_application_forms (form_id);
 -- Backend-first güvenlik.
