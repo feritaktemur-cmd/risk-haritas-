@@ -1495,6 +1495,132 @@ def _active_academic_year(client):
     return rows[0] if rows else None
 
 
+@api.post("/school/riba/applications")
+async def school_riba_create_application(request: Request):
+    """Create a DRAFT RİBA application for the logged-in school.
+
+    school_id / academic_year / name are resolved server-side. The client only
+    sends teacher_count and the selected school_class_id list. All-or-nothing:
+    on any child-insert failure the just-created application row is deleted
+    (children cascade), never leaving a half-built draft. This endpoint ONLY
+    creates the draft + its classes; activation, form pinning, links/QR,
+    student codes, answers and results are out of scope here.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    body = await request.json() or {}
+    teacher_count = body.get("teacher_count")
+    class_ids = body.get("school_class_ids")
+
+    # teacher_count: integer >= 0. bool is rejected (bool is an int subclass).
+    if isinstance(teacher_count, bool) or not isinstance(teacher_count, int):
+        raise HTTPException(status_code=400, detail="Öğretmen sayısı bir tam sayı olmalıdır.")
+    if teacher_count < 0:
+        raise HTTPException(status_code=400, detail="Öğretmen sayısı 0'dan küçük olamaz.")
+
+    # At least one class; reject duplicates instead of silently de-duplicating.
+    if not isinstance(class_ids, list) or not class_ids:
+        raise HTTPException(status_code=400, detail="En az bir sınıf seçilmelidir.")
+    if not all(isinstance(c, str) for c in class_ids):
+        raise HTTPException(status_code=400, detail="Geçersiz sınıf seçimi.")
+    if len(set(class_ids)) != len(class_ids):
+        raise HTTPException(status_code=400, detail="Sınıf seçiminde tekrar eden kayıtlar var.")
+
+    # Active academic year (project convention: reject if none).
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi.")
+    year_id = year["id"]
+
+    # Education level resolved server-side. RİBA only for levels 1..4.
+    srow = (
+        client.table("schools")
+        .select("education_level_id")
+        .eq("id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    education_level_id = srow[0]["education_level_id"] if srow else None
+    if education_level_id not in (1, 2, 3, 4):
+        raise HTTPException(
+            status_code=400,
+            detail="Bu eğitim kademesi için RİBA uygulaması oluşturulamaz.",
+        )
+
+    # Backend guard: one RİBA application per school + academic year (no DB UNIQUE yet).
+    existing = (
+        client.table("riba_applications")
+        .select("id")
+        .eq("school_id", school_id)
+        .eq("academic_year_id", year_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="Bu eğitim yılı için zaten bir RİBA uygulaması mevcut.",
+        )
+
+    # Every selected class must belong to this school (all-or-nothing).
+    owned = (
+        client.table("school_classes")
+        .select("id")
+        .eq("school_id", school_id)
+        .in_("id", class_ids)
+        .execute()
+        .data
+    )
+    if {r["id"] for r in owned} != set(class_ids):
+        raise HTTPException(
+            status_code=400,
+            detail="Seçilen sınıflardan biri bu okula ait değil veya bulunamadı.",
+        )
+
+    name = f"{year['name']} RİBA Uygulaması"
+
+    application_id = None
+    try:
+        app_row = client.table("riba_applications").insert({
+            "school_id": school_id,
+            "academic_year_id": year_id,
+            "name": name,
+            "status": "draft",
+            "teacher_count": teacher_count,
+        }).execute().data
+        application_id = app_row[0]["id"]
+
+        class_payload = [
+            {"application_id": application_id, "school_class_id": cid}
+            for cid in class_ids
+        ]
+        client.table("riba_application_classes").insert(class_payload).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("riba application create failed; cleaning up")
+        if application_id:
+            try:
+                # Children cascade on delete of the parent application row.
+                client.table("riba_applications").delete().eq("id", application_id).eq("school_id", school_id).execute()
+            except Exception:  # noqa: BLE001
+                logger.exception("riba application cleanup failed")
+        raise HTTPException(status_code=500, detail="RİBA uygulaması oluşturulamadı. Lütfen tekrar deneyin.")
+
+    return {
+        "success": True,
+        "application_id": application_id,
+        "name": name,
+        "status": "draft",
+        "teacher_count": teacher_count,
+        "class_count": len(class_ids),
+        "academic_year": year["name"],
+    }
+
+
+
 @api.get("/school/students")
 async def school_students_list(request: Request, q: str = None):
     """List the logged-in school's students for the active academic year.
