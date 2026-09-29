@@ -2068,6 +2068,167 @@ async def riba_public_respond_form(token: str, request: Request):
     }
 
 
+@api.post("/riba/respond/{token}")
+async def riba_public_submit_response(token: str, request: Request):
+    """PUBLIC (no auth) anonymous RİBA response submission via access-link token.
+
+    participant_type/application_id/form_id/school_id come ONLY from the token;
+    the client supplies just school_class_id, gender and answers. This first
+    package supports participant_type='student' only (parent/teacher require a
+    device token added in a later task). All-or-nothing via compensating
+    cleanup: if answer inserts fail, the just-created response is deleted.
+    """
+    client = get_service_client()
+
+    if not token or not str(token).strip():
+        raise HTTPException(status_code=404, detail="Geçersiz veya süresi dolmuş bağlantı.")
+
+    # Resolve access link by token hash.
+    token_hash = hash_link_token(token)
+    link_rows = (
+        client.table("riba_access_links")
+        .select("application_id,participant_type,is_active")
+        .eq("token_hash", token_hash)
+        .limit(1)
+        .execute()
+        .data
+    )
+    link = link_rows[0] if link_rows else None
+    if link is None or not link.get("is_active"):
+        raise HTTPException(status_code=404, detail="Geçersiz veya süresi dolmuş bağlantı.")
+
+    application_id = link["application_id"]
+    participant_type = link["participant_type"]
+
+    # Application must be active.
+    app_rows = (
+        client.table("riba_applications")
+        .select("id,status")
+        .eq("id", application_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = app_rows[0] if app_rows else None
+    if app_row is None:
+        raise HTTPException(status_code=500, detail="Form verisi okunamadı. Lütfen daha sonra tekrar deneyin.")
+    if app_row["status"] != "active":
+        raise HTTPException(status_code=409, detail="Bu anket şu anda yanıtlanamıyor.")
+
+    # First package supports students only; parent/teacher need a device token.
+    if participant_type != "student":
+        raise HTTPException(status_code=409, detail="Bu katılımcı türü için yanıt gönderimi henüz desteklenmiyor.")
+
+    # Parse client body (only allowed fields are read; others ignored).
+    body = await request.json() or {}
+    school_class_id = body.get("school_class_id")
+    gender = body.get("gender")
+    answers = body.get("answers")
+
+    if not isinstance(school_class_id, str) or not school_class_id.strip():
+        raise HTTPException(status_code=400, detail="Sınıf seçimi zorunludur.")
+    if gender not in ("K", "E"):
+        raise HTTPException(status_code=400, detail="Cinsiyet yalnızca K veya E olabilir.")
+    if not isinstance(answers, list) or not answers:
+        raise HTTPException(status_code=400, detail="Cevaplar eksik.")
+
+    # Class must be one bound to THIS application (not merely same school).
+    app_classes = (
+        client.table("riba_application_classes")
+        .select("school_class_id")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    app_class_ids = {r["school_class_id"] for r in app_classes}
+    if school_class_id not in app_class_ids:
+        raise HTTPException(status_code=400, detail="Seçilen sınıf bu uygulamaya dahil değil.")
+
+    # Resolve the AUTHORITATIVE bound form for this participant type.
+    bound = (
+        client.table("riba_application_forms")
+        .select("form_id")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    bound_form_ids = [b["form_id"] for b in bound]
+    matching_form = None
+    if bound_form_ids:
+        forms = (
+            client.table("riba_forms")
+            .select("id,participant_type")
+            .in_("id", bound_form_ids)
+            .eq("participant_type", participant_type)
+            .execute()
+            .data
+        )
+        if len(forms) > 1:
+            raise HTTPException(status_code=500, detail="Form verisi tutarsız. Lütfen daha sonra tekrar deneyin.")
+        matching_form = forms[0] if forms else None
+    if matching_form is None:
+        raise HTTPException(status_code=500, detail="Bu katılımcı türü için form bulunamadı. Lütfen daha sonra tekrar deneyin.")
+    form_id = matching_form["id"]
+
+    # Answer integrity: exactly one A/B choice per question of the bound form.
+    q_rows = (
+        client.table("riba_questions")
+        .select("id")
+        .eq("form_id", form_id)
+        .execute()
+        .data
+    )
+    form_question_ids = {q["id"] for q in q_rows}
+
+    answered = {}
+    for a in answers:
+        if not isinstance(a, dict):
+            raise HTTPException(status_code=400, detail="Geçersiz cevap biçimi.")
+        qid = a.get("question_id")
+        opt = a.get("selected_option")
+        if qid not in form_question_ids:
+            raise HTTPException(status_code=400, detail="Bu forma ait olmayan bir soru cevabı gönderildi.")
+        if qid in answered:
+            raise HTTPException(status_code=400, detail="Aynı soru için birden fazla cevap gönderildi.")
+        if opt not in ("A", "B"):
+            raise HTTPException(status_code=400, detail="Her soru için yalnızca A veya B seçilebilir.")
+        answered[qid] = opt
+    if set(answered.keys()) != form_question_ids:
+        raise HTTPException(status_code=400, detail="Tüm soruların cevaplanması zorunludur.")
+
+    # Write: anonymous response header, then answers. Compensating cleanup.
+    response_id = None
+    try:
+        resp = client.table("riba_responses").insert({
+            "application_id": application_id,
+            "form_id": form_id,
+            "school_class_id": school_class_id,
+            "participant_type": participant_type,
+            "gender": gender,
+            "student_code_id": None,
+            "device_token_hash": None,
+        }).execute().data
+        response_id = resp[0]["id"]
+
+        client.table("riba_answers").insert([
+            {"response_id": response_id, "question_id": qid, "selected_option": opt}
+            for qid, opt in answered.items()
+        ]).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("riba response submission failed; cleaning up")
+        if response_id:
+            try:
+                # Children cascade on delete of the parent response row.
+                client.table("riba_responses").delete().eq("id", response_id).execute()
+            except Exception:  # noqa: BLE001
+                logger.exception("riba response cleanup failed")
+        raise HTTPException(status_code=500, detail="Yanıtınız kaydedilemedi. Lütfen tekrar deneyin.")
+
+    return {"success": True, "message": "Yanıtınız kaydedildi."}
+
+
+
+
 
 
 
