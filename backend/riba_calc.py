@@ -173,3 +173,94 @@ def compute_asp(education_level_id, group_scores):
             return None
         total += weight * score
     return total
+
+
+
+def _group_target_scores(target_ids, freq_map):
+    """Bir grup için tam hedef kümesi üzerinden istatistikleri hesaplar.
+
+    target_ids: kademedeki TAM hedef listesi (sabit sıra).
+    freq_map:   {target_id: frekans}. Sözlükte olmayan hedefler F=0 sayılır.
+
+    Ortalama ve örneklem stddev (n-1) yalnız seçilmiş hedefler üzerinden DEĞİL,
+    tam hedef kümesi (F=0 dâhil) üzerinden hesaplanır. Dönüş:
+    (mean, stddev, {target_id: {"frequency", "standard_score"}}).
+    """
+    frequencies = [freq_map.get(t, 0) for t in target_ids]
+    n = len(frequencies)
+    mean = arithmetic_mean(frequencies)
+    stddev = sample_stddev(frequencies)
+    per_target = {}
+    for t, f in zip(target_ids, frequencies):
+        per_target[t] = {
+            "frequency": f,
+            "standard_score": standard_score(f, mean, stddev, n),
+        }
+    return mean, stddev, per_target
+
+
+def compute_class_target_results(education_level_id, target_ids, group_frequencies):
+    """Tek bir sınıf için tüm hedeflerin grup istatistiklerini ve ASP'sini hesaplar.
+
+    education_level_id: kademe (1-4).
+    target_ids:         kademeye ait TAM target_id kümesi (iterable).
+    group_frequencies:  {"student": {target_id: F}, "parent": {...}, "teacher": {...}}
+                        Yalnız ilgili kademede geçerli gruplar dikkate alınır;
+                        geçersiz gruplar (ör. Okul Öncesi 'student') yok sayılır.
+
+    Kurallar:
+    - İlgili grup group_frequencies'te varsa: tam hedef kümesi üzerinden (seçilmemiş
+      hedefler F=0) mean, örneklem stddev (n-1) ve her hedef için standart puan.
+    - İlgili grup verilmemişse: o grubun tüm değerleri None (yetersiz veri).
+    - Her hedef için ASP, mevcut compute_asp() ile hesaplanır; ilgili grupların
+      herhangi birinin standart puanı None ise ASP None olur.
+    - stddev == 0 / yetersiz veri: mevcut None davranışı korunur. Yuvarlama yok.
+
+    Dönüş: {target_id: {
+        "<grup>_frequency", "<grup>_mean", "<grup>_stddev", "<grup>_standard_score"
+        (her ilgili grup için), "asp"
+    }}
+    """
+    weights = GROUP_WEIGHTS.get(education_level_id)
+    if weights is None:
+        raise ValueError(f"Bilinmeyen education_level_id: {education_level_id!r}.")
+
+    targets = list(target_ids)
+    relevant_groups = list(weights.keys())
+
+    # Her ilgili grup için istatistikleri hesapla (varsa).
+    group_stats = {}   # grup -> (mean, stddev, {target: {frequency, standard_score}})
+    for group in relevant_groups:
+        freq_map = group_frequencies.get(group)
+        if freq_map is None:
+            group_stats[group] = (None, None, None)
+            continue
+        stray = set(freq_map) - set(targets)
+        if stray:
+            raise ValueError(
+                f"'{group}' frekanslarında tam hedef kümesinde olmayan target_id var: {stray}."
+            )
+        group_stats[group] = _group_target_scores(targets, freq_map)
+
+    results = {}
+    for t in targets:
+        row = {}
+        asp_input = {}
+        for group in relevant_groups:
+            mean, stddev, per_target = group_stats[group]
+            if per_target is None:
+                freq = None
+                score = None
+            else:
+                cell = per_target[t]
+                freq = cell["frequency"]
+                score = cell["standard_score"]
+            row[f"{group}_frequency"] = freq
+            row[f"{group}_mean"] = mean
+            row[f"{group}_stddev"] = stddev
+            row[f"{group}_standard_score"] = score
+            asp_input[group] = score
+        row["asp"] = compute_asp(education_level_id, asp_input)
+        results[t] = row
+
+    return results
