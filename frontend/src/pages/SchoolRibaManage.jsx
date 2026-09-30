@@ -87,15 +87,29 @@ function HowCalculated({ open, setOpen }) {
   );
 }
 
-function ResultsPanel({ results, tab, setTab, selectedClassId, setSelectedClassId, howOpen, setHowOpen }) {
+function ResultsPanel({ results, tab, setTab, selectedClassId, setSelectedClassId, howOpen, setHowOpen, st1, st2, setSt1, setSt2, onFinalizeClick }) {
   const app = results.application || {};
   const classResults = results.class_results || [];
   const schoolResults = results.school_results || [];
   // Preschool (education_level_id === 1) has no student participant group.
   const showStudent = app.education_level_id !== 1;
   const closed = formatDate(app.closed_at);
+  const isClosed = app.status === "closed";
+  const isFinalized = app.status === "finalized";
 
   const activeClass = classResults.find((c) => c.school_class_id === selectedClassId) || classResults[0] || null;
+
+  // Special-target option label (helper info only; never reorders).
+  const optionLabel = (t) => {
+    let extra = "";
+    const hasRank = t.rank !== null && t.rank !== undefined;
+    const hasAsp = t.average_asp !== null && t.average_asp !== undefined;
+    if (hasRank && hasAsp) extra = ` (Sıra: ${t.rank}, ASP: ${formatAsp(t.average_asp)})`;
+    else if (hasRank) extra = ` (Sıra: ${t.rank})`;
+    else if (hasAsp) extra = ` (ASP: ${formatAsp(t.average_asp)})`;
+    return `${t.meb_code} — ${t.target_name}${extra}`;
+  };
+  const canFinalize = st1 && st2 && st1 !== st2;
 
   return (
     <div className="mt-5" data-testid="riba-results-panel">
@@ -222,6 +236,74 @@ function ResultsPanel({ results, tab, setTab, selectedClassId, setSelectedClassI
         </div>
       )}
 
+      {/* Okul Özel Hedefleri */}
+      {(isClosed || isFinalized) && (
+        <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-5" data-testid="riba-special-targets-card">
+          <h4 className="text-sm font-bold text-white">Okul Özel Hedefleri</h4>
+
+          {isFinalized ? (
+            <div className="mt-3" data-testid="riba-special-targets-readonly">
+              {(app.special_targets || []).map((t, i) => (
+                <p key={t.target_id} className="text-sm text-slate-200" data-testid={`riba-special-target-ro-${i + 1}`}>
+                  <span className="text-slate-400">{i + 1}.</span> <span className="font-mono text-xs text-slate-300">{t.meb_code}</span> — {t.target_name}
+                </p>
+              ))}
+              {app.finalized_at && (
+                <p className="mt-2 text-xs text-slate-500">Sonuçlandırma: {formatDate(app.finalized_at)}</p>
+              )}
+            </div>
+          ) : (
+            <div className="mt-3" data-testid="riba-special-targets-select">
+              <p className="text-xs leading-relaxed text-slate-400">
+                RİBA sonuçlarını ve okulunuzdaki gözlem, görüşme ve diğer değerlendirme sonuçlarını dikkate alarak iki özel hedef belirleyiniz.
+              </p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300">Özel Hedef 1</label>
+                  <select
+                    value={st1}
+                    onChange={(e) => setSt1(e.target.value)}
+                    data-testid="riba-special-target-1"
+                    className="mt-1.5 w-full rounded-lg border border-white/10 bg-[#0b1120] px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/60"
+                  >
+                    <option value="">Seçiniz…</option>
+                    {schoolResults.map((t) => (
+                      <option key={t.target_id} value={t.target_id} disabled={t.target_id === st2}>
+                        {optionLabel(t)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300">Özel Hedef 2</label>
+                  <select
+                    value={st2}
+                    onChange={(e) => setSt2(e.target.value)}
+                    data-testid="riba-special-target-2"
+                    className="mt-1.5 w-full rounded-lg border border-white/10 bg-[#0b1120] px-3 py-2 text-sm text-white outline-none focus:border-emerald-400/60"
+                  >
+                    <option value="">Seçiniz…</option>
+                    {schoolResults.map((t) => (
+                      <option key={t.target_id} value={t.target_id} disabled={t.target_id === st1}>
+                        {optionLabel(t)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <button
+                onClick={onFinalizeClick}
+                disabled={!canFinalize}
+                data-testid="riba-finalize-btn"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Özel Hedefleri Kaydet ve Sonuçlandır
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <HowCalculated open={howOpen} setOpen={setHowOpen} />
     </div>
   );
@@ -326,6 +408,46 @@ export default function SchoolRibaManage() {
   const [resultsTab, setResultsTab] = useState("class");
   const [selectedResultClassId, setSelectedResultClassId] = useState(null);
   const [howOpen, setHowOpen] = useState(false);
+  const [st1, setSt1] = useState("");
+  const [st2, setSt2] = useState("");
+  const [finalizeConfirmOpen, setFinalizeConfirmOpen] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState(null);
+
+  const submitFinalize = async () => {
+    if (finalizing) return;
+    setFinalizing(true);
+    setFinalizeError(null);
+    try {
+      const h = await authHeader();
+      if (!h) {
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      const res = await axios.post(
+        `${API}/school/riba/applications/${applicationId}/finalize`,
+        { special_target_1_id: st1, special_target_2_id: st2 },
+        { headers: h }
+      );
+      if (res.data?.status === "finalized") {
+        setFinalizeConfirmOpen(false);
+        setFlash("RİBA uygulaması başarıyla sonuçlandırıldı.");
+        await load();
+        await loadResults();
+      } else {
+        setFinalizeError("RİBA uygulaması sonuçlandırılırken bir sorun oluştu. Lütfen tekrar deneyiniz.");
+      }
+    } catch (err) {
+      if (err.response?.status === 401) {
+        await supabase.auth.signOut();
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      setFinalizeError("RİBA uygulaması sonuçlandırılırken bir sorun oluştu. Lütfen tekrar deneyiniz.");
+    } finally {
+      setFinalizing(false);
+    }
+  };
 
   const loadResults = useCallback(async () => {
     setResultsLoading(true);
@@ -713,6 +835,11 @@ export default function SchoolRibaManage() {
                     setSelectedClassId={setSelectedResultClassId}
                     howOpen={howOpen}
                     setHowOpen={setHowOpen}
+                    st1={st1}
+                    st2={st2}
+                    setSt1={setSt1}
+                    setSt2={setSt2}
+                    onFinalizeClick={() => { setFinalizeError(null); setFinalizeConfirmOpen(true); }}
                   />
                 )}
               </div>
@@ -1085,6 +1212,68 @@ export default function SchoolRibaManage() {
           </div>
         </div>
       )}
+
+      {/* Finalize confirmation modal */}
+      {finalizeConfirmOpen && (() => {
+        const opts = results?.school_results || [];
+        const find = (id) => opts.find((t) => t.target_id === id);
+        const t1 = find(st1);
+        const t2 = find(st2);
+        const label = (t) => (t ? `${t.meb_code} — ${t.target_name}` : "—");
+        return (
+          <div
+            className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+            data-testid="riba-finalize-modal"
+            onClick={() => { if (!finalizing) setFinalizeConfirmOpen(false); }}
+          >
+            <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0f172a] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="text-lg font-extrabold text-white">RİBA Uygulamasını Sonuçlandır</h3>
+                <button
+                  onClick={() => setFinalizeConfirmOpen(false)}
+                  disabled={finalizing}
+                  data-testid="riba-finalize-modal-close"
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="mt-4 space-y-1.5 rounded-xl bg-white/[0.03] p-3 text-sm text-slate-200 ring-1 ring-white/10">
+                <p data-testid="riba-finalize-preview-1"><span className="text-slate-400">Özel Hedef 1:</span> {label(t1)}</p>
+                <p data-testid="riba-finalize-preview-2"><span className="text-slate-400">Özel Hedef 2:</span> {label(t2)}</p>
+              </div>
+              <p className="mt-4 text-sm text-slate-400">
+                Bu işlem RİBA uygulamasını sonuçlandıracaktır. Seçtiğiniz iki özel hedef sonuçlandırma sonrasında değiştirilemeyecektir. Devam etmek istiyor musunuz?
+              </p>
+              {finalizeError && (
+                <div data-testid="riba-finalize-error" className="mt-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{finalizeError}</span>
+                </div>
+              )}
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setFinalizeConfirmOpen(false)}
+                  disabled={finalizing}
+                  data-testid="riba-finalize-cancel"
+                  className="rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] disabled:opacity-40"
+                >
+                  Vazgeç
+                </button>
+                <button
+                  onClick={submitFinalize}
+                  disabled={finalizing}
+                  data-testid="riba-finalize-confirm"
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {finalizing ? <Loader2 size={14} className="animate-spin" /> : null}
+                  {finalizing ? "Sonuçlandırılıyor…" : "Sonuçlandır"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
 
       <CorporateFooter className="border-t border-white/10" />
     </div>

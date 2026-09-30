@@ -131,6 +131,10 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
   * Okul: Sıra(snapshot rank)|MEB Kodu|İhtiyaç|Ortalama ASP; null → aynı metin; rank/average frontend'de hesaplanmaz; ilk3/vurgu yok.
   * "Nasıl hesaplandı?" collapsible (sabit metin, teknik sayılar yok). Responsive (yatay scroll). E2E: kapalı Okul Öncesi verisiyle (1 sınıf 4/A, 0/1/0, 27 target ASP null, 27 school avg/rank null) doğrulandı; DB write yok.
 
+- RİBA Özel Hedef Finalize — Backend + Frontend (Haziran 2026):
+  * `POST /api/school/riba/applications/{id}/finalize` (yalnız closed; iki farklı target zorunlu 422; kademe + snapshot-set doğrulaması target_id ile; ASP/rank NULL engel değil; tek atomik koşullu update status=finalized+finalized_at; 409 yarış). Results API `application.finalized_at` + `special_targets[]` döndürüyor + finalized integrity guard.
+  * Frontend `SchoolRibaManage.jsx` ResultsPanel: closed'da "Okul Özel Hedefleri" seçim kartı (2 select, duplicate engeli, preselect yok, ASP/rank yardımcı bilgi—sıralama değişmez), "Özel Hedefleri Kaydet ve Sonuçlandır" → confirmation modal → POST finalize (loading "Sonuçlandırılıyor…", çift tık guard). Başarıda flash + reload. finalized'da read-only 2 hedef + finalized_at; düzenle butonu yok.
+
 ## Backlog / Sonraki olası görevler
 - RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)
 - Submission status workflow (under_review / revision_requested / approved) UI+backend
