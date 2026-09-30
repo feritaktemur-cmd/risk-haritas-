@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ClipboardList, ArrowLeft, Plus, Inbox, CheckCircle2, AlertTriangle, Users, CalendarDays, Settings2 } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, Plus, Inbox, CheckCircle2, AlertTriangle, Users, CalendarDays, Settings2, BarChart3 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
@@ -205,6 +205,15 @@ export default function SchoolRiba() {
                         className="inline-flex items-center gap-2 rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]"
                       >
                         <Settings2 size={15} /> Uygulamayı Yönet
+                      </button>
+                    )}
+                    {(app.status === "closed" || app.status === "finalized") && (
+                      <button
+                        onClick={() => navigate(`/school/riba/${app.id}`)}
+                        data-testid={`riba-app-results-${app.id}`}
+                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-200 ring-1 ring-emerald-400/30 transition hover:bg-emerald-500/25"
+                      >
+                        <BarChart3 size={15} /> Sonuçları Görüntüle
                       </button>
                     )}
                   </div>
