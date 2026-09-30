@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info, Link2, Copy, ExternalLink, Check, BarChart3, GraduationCap, Lock, CheckCircle2 } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info, Link2, Copy, ExternalLink, Check, BarChart3, GraduationCap, Lock, CheckCircle2, ChevronDown, School } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
@@ -48,11 +48,193 @@ function formatPct(percentage) {
   return `%${Number.isInteger(r) ? r : r.toFixed(1)}`;
 }
 
+const NO_DATA_TEXT = "Hesaplama için yeterli veri bulunmamaktadır.";
+
+// Presentation-only ASP formatting; raw value in state stays unchanged.
+function formatAsp(asp) {
+  if (asp === null || asp === undefined) return null;
+  const r = Math.round(asp * 100) / 100;
+  return Number.isInteger(r) ? String(r) : r.toFixed(2);
+}
+
 // Visual bar width is capped at 100% so the UI never overflows, while the
 // written percentage above shows the real (possibly >100%) backend value.
 function barWidth(percentage) {
   if (percentage === null || percentage === undefined) return 0;
   return Math.max(0, Math.min(100, percentage));
+}
+
+const RIBA_METHODOLOGY_TEXT =
+  "RİBA sonuçları MEB RİBA Sınıf ve Okul Sonuç Çizelgelerinde kullanılan hesaplama yöntemi esas alınarak oluşturulmuştur. Katılımcı cevaplarından her rehberlik ihtiyacının frekansı belirlenmiş, frekanslar standart puana dönüştürülmüş ve ilgili eğitim kademesi için belirlenen öğrenci, veli ve öğretmen ağırlıkları kullanılarak ASP hesaplanmıştır. Öncelik sırası ASP değerlerine göre belirlenmiştir.";
+
+function HowCalculated({ open, setOpen }) {
+  return (
+    <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02]">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        data-testid="riba-results-how-toggle"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-bold text-white"
+      >
+        <span className="inline-flex items-center gap-2"><Info size={15} className="text-emerald-300/80" /> Nasıl hesaplandı?</span>
+        <ChevronDown size={16} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <p className="border-t border-white/10 px-4 py-3 text-xs leading-relaxed text-slate-400" data-testid="riba-results-how-text">
+          {RIBA_METHODOLOGY_TEXT}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ResultsPanel({ results, tab, setTab, selectedClassId, setSelectedClassId, howOpen, setHowOpen }) {
+  const app = results.application || {};
+  const classResults = results.class_results || [];
+  const schoolResults = results.school_results || [];
+  // Preschool (education_level_id === 1) has no student participant group.
+  const showStudent = app.education_level_id !== 1;
+  const closed = formatDate(app.closed_at);
+
+  const activeClass = classResults.find((c) => c.school_class_id === selectedClassId) || classResults[0] || null;
+
+  return (
+    <div className="mt-5" data-testid="riba-results-panel">
+      {/* summary */}
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400" data-testid="riba-results-summary">
+        <span>Eğitim Öğretim Yılı: <span className="text-slate-200">{app.academic_year || "—"}</span></span>
+        <span>Eğitim Kademesi: <span className="text-slate-200">{app.education_level || "—"}</span></span>
+        {closed && <span>Kapanış: <span className="text-slate-200">{closed}</span></span>}
+      </div>
+
+      {/* tabs */}
+      <div className="mt-4 inline-flex rounded-xl bg-white/[0.04] p-1 ring-1 ring-white/10" data-testid="riba-results-tabs">
+        <button
+          onClick={() => setTab("class")}
+          data-testid="riba-results-tab-class"
+          className={`rounded-lg px-4 py-1.5 text-sm font-bold transition ${tab === "class" ? "bg-emerald-500/20 text-white" : "text-slate-300 hover:text-white"}`}
+        >
+          Sınıf Sonuçları
+        </button>
+        <button
+          onClick={() => setTab("school")}
+          data-testid="riba-results-tab-school"
+          className={`rounded-lg px-4 py-1.5 text-sm font-bold transition ${tab === "school" ? "bg-emerald-500/20 text-white" : "text-slate-300 hover:text-white"}`}
+        >
+          Okul Sonucu
+        </button>
+      </div>
+
+      {/* CLASS TAB */}
+      {tab === "class" && activeClass && (
+        <div className="mt-4" data-testid="riba-results-class">
+          {classResults.length > 1 ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">Sınıf:</span>
+              <select
+                value={activeClass.school_class_id}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+                data-testid="riba-results-class-select"
+                className="rounded-lg border border-white/10 bg-[#0b1120] px-3 py-1.5 text-sm font-bold text-white outline-none focus:border-emerald-400/60"
+              >
+                {classResults.map((c) => (
+                  <option key={c.school_class_id} value={c.school_class_id}>{c.class_name}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <p className="text-sm font-extrabold text-white" data-testid="riba-results-class-name">{activeClass.class_name}</p>
+          )}
+
+          {/* response counts */}
+          <div className="mt-3 flex flex-wrap gap-2.5" data-testid="riba-results-counts">
+            {showStudent && (
+              <CountChip icon={<GraduationCap size={14} />} label="Öğrenci" value={activeClass.student_response_count} testid="riba-results-count-student" />
+            )}
+            <CountChip icon={<Users size={14} />} label="Veli" value={activeClass.parent_response_count} testid="riba-results-count-parent" />
+            <CountChip icon={<Users size={14} />} label="Öğretmen" value={activeClass.teacher_response_count} testid="riba-results-count-teacher" />
+          </div>
+
+          {/* target table */}
+          <div className="mt-4 overflow-x-auto rounded-xl border border-white/10" data-testid="riba-results-class-table">
+            <table className="w-full min-w-[520px] text-left text-sm">
+              <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th className="w-20 px-3 py-2 font-semibold">MEB Kodu</th>
+                  <th className="px-3 py-2 font-semibold">Rehberlik İhtiyacı</th>
+                  <th className="w-56 px-3 py-2 font-semibold">ASP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeClass.targets.map((t) => {
+                  const asp = formatAsp(t.asp);
+                  return (
+                    <tr key={t.target_id} className="border-t border-white/10" data-testid={`riba-results-class-row-${t.meb_code}`}>
+                      <td className="px-3 py-2 font-mono text-xs text-slate-300">{t.meb_code}</td>
+                      <td className="px-3 py-2 text-slate-200">{t.target_name}</td>
+                      <td className="px-3 py-2">
+                        {asp === null ? (
+                          <span className="text-xs italic text-slate-500">{NO_DATA_TEXT}</span>
+                        ) : (
+                          <span className="font-bold text-white">{asp}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* SCHOOL TAB */}
+      {tab === "school" && (
+        <div className="mt-4 overflow-x-auto rounded-xl border border-white/10" data-testid="riba-results-school-table">
+          <table className="w-full min-w-[560px] text-left text-sm">
+            <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
+              <tr>
+                <th className="w-16 px-3 py-2 font-semibold">Sıra</th>
+                <th className="w-20 px-3 py-2 font-semibold">MEB Kodu</th>
+                <th className="px-3 py-2 font-semibold">Rehberlik İhtiyacı</th>
+                <th className="w-56 px-3 py-2 font-semibold">Ortalama ASP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {schoolResults.map((t) => {
+                const avg = formatAsp(t.average_asp);
+                return (
+                  <tr key={t.target_id} className="border-t border-white/10" data-testid={`riba-results-school-row-${t.meb_code}`}>
+                    <td className="px-3 py-2 text-slate-300">{t.rank === null || t.rank === undefined ? <span className="text-slate-500">—</span> : t.rank}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-300">{t.meb_code}</td>
+                    <td className="px-3 py-2 text-slate-200">{t.target_name}</td>
+                    <td className="px-3 py-2">
+                      {avg === null ? (
+                        <span className="text-xs italic text-slate-500">{NO_DATA_TEXT}</span>
+                      ) : (
+                        <span className="font-bold text-white">{avg}</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <HowCalculated open={howOpen} setOpen={setHowOpen} />
+    </div>
+  );
+}
+
+function CountChip({ icon, label, value, testid }) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-lg bg-white/[0.06] px-3 py-1.5 text-sm ring-1 ring-white/10" data-testid={testid}>
+      <span className="text-slate-400">{icon}</span>
+      <span className="text-slate-300">{label}:</span>
+      <span className="font-bold text-white">{value}</span>
+    </div>
+  );
 }
 
 function CloseMetricRow({ title, metric, testid }) {
@@ -138,6 +320,32 @@ export default function SchoolRibaManage() {
   const [closing, setClosing] = useState(false);
   const [closeSubmitError, setCloseSubmitError] = useState(null);
   const [flash, setFlash] = useState(null);
+  const [results, setResults] = useState(null);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultsError, setResultsError] = useState(null);
+  const [resultsTab, setResultsTab] = useState("class");
+  const [selectedResultClassId, setSelectedResultClassId] = useState(null);
+  const [howOpen, setHowOpen] = useState(false);
+
+  const loadResults = useCallback(async () => {
+    setResultsLoading(true);
+    setResultsError(null);
+    try {
+      const h = await authHeader();
+      if (!h) {
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      const res = await axios.get(`${API}/school/riba/applications/${applicationId}/results`, { headers: h });
+      setResults(res.data);
+      const first = res.data?.class_results?.[0]?.school_class_id || null;
+      setSelectedResultClassId(first);
+    } catch (err) {
+      setResultsError("RİBA sonuçları yüklenirken bir sorun oluştu. Lütfen tekrar deneyiniz.");
+    } finally {
+      setResultsLoading(false);
+    }
+  }, [navigate, applicationId]);
 
   const openClosePreview = useCallback(async () => {
     setCloseOpen(true);
@@ -276,7 +484,10 @@ export default function SchoolRibaManage() {
       loadLinks();
       loadParticipation();
     }
-  }, [app?.status, loadLinks, loadParticipation]);
+    if (app?.status === "closed" || app?.status === "finalized") {
+      loadResults();
+    }
+  }, [app?.status, loadLinks, loadParticipation, loadResults]);
 
   const copyLink = async (ptype, url) => {
     try {
@@ -469,6 +680,44 @@ export default function SchoolRibaManage() {
                 </div>
               ) : null}
             </div>
+
+            {/* Sonuçlar (closed / finalized) */}
+            {(app.status === "closed" || app.status === "finalized") && (
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6" data-testid="riba-results-section">
+                <div className="flex items-center gap-2">
+                  <BarChart3 size={16} className="text-emerald-300/80" />
+                  <h3 className="text-sm font-bold text-white">Sonuçlar</h3>
+                </div>
+
+                {resultsLoading && (
+                  <div className="mt-5 flex items-center gap-2 text-sm text-slate-400" data-testid="riba-results-loading">
+                    <Loader2 size={16} className="animate-spin text-emerald-300" /> Sonuçlar yükleniyor…
+                  </div>
+                )}
+
+                {!resultsLoading && resultsError && (
+                  <div
+                    data-testid="riba-results-error"
+                    className="mt-5 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20"
+                  >
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{resultsError}</span>
+                  </div>
+                )}
+
+                {!resultsLoading && !resultsError && results && (
+                  <ResultsPanel
+                    results={results}
+                    tab={resultsTab}
+                    setTab={setResultsTab}
+                    selectedClassId={selectedResultClassId}
+                    setSelectedClassId={setSelectedResultClassId}
+                    howOpen={howOpen}
+                    setHowOpen={setHowOpen}
+                  />
+                )}
+              </div>
+            )}
+
 
             {/* Formlar ve QR (only when active) */}
             {app.status === "active" && (

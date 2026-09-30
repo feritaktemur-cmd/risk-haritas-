@@ -124,6 +124,13 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
   * Test: syntax/build kontrolü (webpack compiled successfully). Gerçek DB testi kullanıcı Preview'da yapacak.
   * Sonraki: application listeleme, activate/başlat, formlar/QR, katılım, sonuçlar.
 
+- RİBA Sonuçlar Paneli — Backend + Frontend (Haziran 2026):
+  * `GET /api/school/riba/applications/{id}/results` (read-only, yalnız closed/finalized; snapshot-only; ASP/avg/rank yeniden hesaplanmaz; `_riba_meb_code_sort_key` doğal sıralama; snapshot bütünlük kontrolü + kontrollü 500; 409 draft/active).
+  * Frontend `SchoolRibaManage.jsx`: closed/finalized'da "Sonuçlar" bölümü → Sınıf Sonuçları | Okul Sonucu sekmeleri; ResultsPanel/HowCalculated/CountChip bileşenleri.
+  * Sınıf: tek sınıfta ad, çoklu sınıfta selector; response counts (Okul Öncesi'nde Öğrenci kartı gizli — education_level_id!==1); MEB Kodu|Rehberlik İhtiyacı|ASP; ASP null → "Hesaplama için yeterli veri bulunmamaktadır."
+  * Okul: Sıra(snapshot rank)|MEB Kodu|İhtiyaç|Ortalama ASP; null → aynı metin; rank/average frontend'de hesaplanmaz; ilk3/vurgu yok.
+  * "Nasıl hesaplandı?" collapsible (sabit metin, teknik sayılar yok). Responsive (yatay scroll). E2E: kapalı Okul Öncesi verisiyle (1 sınıf 4/A, 0/1/0, 27 target ASP null, 27 school avg/rank null) doğrulandı; DB write yok.
+
 ## Backlog / Sonraki olası görevler
 - RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)
 - Submission status workflow (under_review / revision_requested / approved) UI+backend
