@@ -31,6 +31,7 @@ import SchoolRiskMap from "./pages/SchoolRiskMap";
 import SchoolStatistics from "./pages/SchoolStatistics";
 import SchoolRiba from "./pages/SchoolRiba";
 import SchoolRibaNew from "./pages/SchoolRibaNew";
+import SchoolRibaManage from "./pages/SchoolRibaManage";
 import RibaRespond from "./pages/RibaRespond";
 import "./App.css";
 
@@ -112,6 +113,7 @@ export default function App() {
         <Route path="/school/statistics" element={<SchoolStatistics />} />
         <Route path="/school/riba" element={<SchoolRiba />} />
         <Route path="/school/riba/new" element={<SchoolRibaNew />} />
+        <Route path="/school/riba/:applicationId" element={<SchoolRibaManage />} />
         <Route path="/riba/respond/:token" element={<RibaRespond />} />
         <Route path="/" element={<Navigate to="/school/login" replace />} />
         <Route path="/status" element={<Shell><ConnectionStatus /></Shell>} />
