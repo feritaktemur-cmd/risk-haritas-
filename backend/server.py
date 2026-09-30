@@ -1622,6 +1622,93 @@ async def school_riba_create_application(request: Request):
     }
 
 
+@api.get("/school/riba/applications")
+async def school_riba_list_applications(request: Request):
+    """List the logged-in school's own RİBA applications (read-only, minimal).
+
+    Scoped strictly by token->school_id; the client can never pass school_id.
+    Returns only what a list view needs: id, name, status, academic year name,
+    teacher_count, timestamps, class_count and the readable classes. Access
+    tokens/hashes, form bindings, responses, results and special targets are
+    intentionally NOT exposed here.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    apps = (
+        client.table("riba_applications")
+        .select("id,name,status,academic_year_id,teacher_count,created_at,opened_at,closed_at")
+        .eq("school_id", school_id)
+        .order("created_at", desc=True)
+        .execute()
+        .data
+    )
+    if not apps:
+        return {"applications": []}
+
+    app_ids = [a["id"] for a in apps]
+    year_ids = list({a["academic_year_id"] for a in apps if a.get("academic_year_id")})
+
+    # Academic year display names (batched).
+    year_name_by_id = {}
+    if year_ids:
+        ay_rows = (
+            client.table("academic_years")
+            .select("id,name")
+            .in_("id", year_ids)
+            .execute()
+            .data
+        )
+        year_name_by_id = {r["id"]: r["name"] for r in ay_rows}
+
+    # Application classes via riba_application_classes -> school_classes (batched).
+    # school_id is selected so we can silently drop any row that does not belong
+    # to this school (defensive integrity guard; never leak another school's data).
+    ac_rows = (
+        client.table("riba_application_classes")
+        .select("application_id,school_class:school_classes(id,level,branch,school_id)")
+        .in_("application_id", app_ids)
+        .execute()
+        .data
+    )
+    classes_by_app = {aid: [] for aid in app_ids}
+    for r in ac_rows:
+        aid = r.get("application_id")
+        sc = r.get("school_class") or {}
+        if aid not in classes_by_app:
+            continue
+        if sc.get("id") is None or sc.get("school_id") != school_id:
+            continue
+        classes_by_app[aid].append({
+            "id": sc["id"],
+            "level": sc["level"],
+            "branch": sc["branch"],
+            "name": f"{sc['level']}/{sc['branch']}",
+        })
+    for aid in classes_by_app:
+        classes_by_app[aid].sort(key=lambda c: (c["level"], c["branch"]))
+
+    applications = []
+    for a in apps:
+        classes = classes_by_app.get(a["id"], [])
+        applications.append({
+            "id": a["id"],
+            "name": a["name"],
+            "status": a["status"],
+            "academic_year": year_name_by_id.get(a.get("academic_year_id")),
+            "teacher_count": a["teacher_count"],
+            "created_at": a.get("created_at"),
+            "opened_at": a.get("opened_at"),
+            "closed_at": a.get("closed_at"),
+            "class_count": len(classes),
+            "classes": classes,
+        })
+
+    return {"applications": applications}
+
+
+
 @api.post("/school/riba/applications/{application_id}/activate")
 async def school_riba_activate_application(application_id: str, request: Request):
     """Activate a DRAFT RİBA application: pin the active form versions and flip
