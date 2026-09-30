@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info, Link2, Copy, ExternalLink, Check, BarChart3, GraduationCap } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info, Link2, Copy, ExternalLink, Check, BarChart3, GraduationCap, Lock, CheckCircle2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
@@ -55,6 +55,32 @@ function barWidth(percentage) {
   return Math.max(0, Math.min(100, percentage));
 }
 
+function CloseMetricRow({ title, metric, testid }) {
+  const met = metric.meets_30_percent === true;
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3.5" data-testid={testid}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-bold text-white">{title}</p>
+        <p className="text-sm font-bold text-white" data-testid={`${testid}-count`}>
+          {metric.response_count} / {metric.denominator} yanıt · {formatPct(metric.percentage)}
+        </p>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+        <span className="text-slate-400">Minimum hedef: <span className="text-slate-200">{metric.minimum_required}</span></span>
+        {met ? (
+          <span className="inline-flex items-center gap-1 font-semibold text-emerald-300" data-testid={`${testid}-target`}>
+            <Check size={13} /> %30 hedefe ulaşıldı
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 font-semibold text-amber-300" data-testid={`${testid}-target`}>
+            <AlertTriangle size={13} /> %30 hedef henüz tamamlanmadı
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ParticipantMetric({ label, icon, metric, testid }) {
   const met = metric.meets_30_percent === true;
   return (
@@ -105,6 +131,30 @@ export default function SchoolRibaManage() {
   const [participation, setParticipation] = useState(null);
   const [partLoading, setPartLoading] = useState(false);
   const [partError, setPartError] = useState(null);
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [closePreview, setClosePreview] = useState(null);
+  const [closeLoading, setCloseLoading] = useState(false);
+  const [closeError, setCloseError] = useState(null);
+
+  const openClosePreview = useCallback(async () => {
+    setCloseOpen(true);
+    setClosePreview(null);
+    setCloseError(null);
+    setCloseLoading(true);
+    try {
+      const h = await authHeader();
+      if (!h) {
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      const res = await axios.get(`${API}/school/riba/applications/${applicationId}/close-preview`, { headers: h });
+      setClosePreview(res.data);
+    } catch (err) {
+      setCloseError("Kapatma ön kontrolü yapılırken bir sorun oluştu. Lütfen tekrar deneyiniz.");
+    } finally {
+      setCloseLoading(false);
+    }
+  }, [navigate, applicationId]);
 
   const loadParticipation = useCallback(async () => {
     setPartLoading(true);
@@ -536,6 +586,27 @@ export default function SchoolRibaManage() {
               </div>
             )}
 
+            {/* Uygulamayı Kapat (only when active) */}
+            {app.status === "active" && (
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6" data-testid="riba-close-section">
+                <div className="flex items-center gap-2">
+                  <Lock size={16} className="text-amber-300/80" />
+                  <h3 className="text-sm font-bold text-white">Uygulamayı Kapat</h3>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  Uygulamayı kapatmadan önce mevcut katılım durumunu kontrol edebilirsiniz.
+                </p>
+                <button
+                  onClick={openClosePreview}
+                  data-testid="riba-close-btn"
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-amber-500/15 px-5 py-2.5 text-sm font-bold text-amber-200 ring-1 ring-amber-400/30 transition hover:bg-amber-500/25"
+                >
+                  <Lock size={15} /> Uygulamayı Kapat
+                </button>
+              </div>
+            )}
+
+
           </>
         )}
       </main>
@@ -595,6 +666,115 @@ export default function SchoolRibaManage() {
                 {activating ? "Başlatılıyor…" : "Başlat"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* Close pre-check modal (read-only; NO real close in this task) */}
+      {closeOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+          data-testid="riba-close-modal"
+          onClick={() => setCloseOpen(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-[#0f172a] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-lg font-extrabold text-white">RİBA Uygulamasını Kapat</h3>
+              <button
+                onClick={() => setCloseOpen(false)}
+                data-testid="riba-close-modal-close"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="mt-3 text-sm text-slate-400">
+              Uygulama kapatıldığında yeni yanıt kabul edilmeyecektir. Kapatmadan önce mevcut katılım durumunu kontrol ediniz.
+            </p>
+
+            {closeLoading && (
+              <div className="mt-5 flex items-center gap-2 text-sm text-slate-400" data-testid="riba-close-loading">
+                <Loader2 size={16} className="animate-spin text-emerald-300" /> Katılım durumu kontrol ediliyor…
+              </div>
+            )}
+
+            {!closeLoading && closeError && (
+              <div
+                data-testid="riba-close-error"
+                className="mt-5 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20"
+              >
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{closeError}</span>
+              </div>
+            )}
+
+            {!closeLoading && !closeError && closePreview && (
+              <>
+                {/* Below-target advisory (amber, non-blocking) */}
+                {closePreview.has_below_target ? (
+                  <div
+                    data-testid="riba-close-below-target"
+                    className="mt-5 flex items-start gap-2 rounded-xl bg-amber-500/10 p-3.5 text-sm text-amber-200 ring-1 ring-amber-400/25"
+                  >
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                    <span>
+                      Bazı katılımcı gruplarında %30 katılım hedefine henüz ulaşılmadı. Bu durum uygulamayı kapatmanıza
+                      engel değildir. İsterseniz yanıt toplamaya devam edebilir veya mevcut katılımla uygulamayı
+                      kapatabilirsiniz.
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    data-testid="riba-close-all-met"
+                    className="mt-5 flex items-start gap-2 rounded-xl bg-emerald-500/10 p-3.5 text-sm text-emerald-200 ring-1 ring-emerald-400/25"
+                  >
+                    <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
+                    <span>Tüm katılımcı gruplarında %30 katılım hedefine ulaşılmıştır.</span>
+                  </div>
+                )}
+
+                {/* Participation summary (authoritative from endpoint) */}
+                <div className="mt-5 space-y-2.5" data-testid="riba-close-summary">
+                  {(closePreview.participation?.classes || []).map((cls) => (
+                    <React.Fragment key={cls.school_class_id}>
+                      {cls.parent && (
+                        <CloseMetricRow title={`${cls.class_name} – Veli`} metric={cls.parent} testid={`riba-close-${cls.school_class_id}-parent`} />
+                      )}
+                      {cls.student && (
+                        <CloseMetricRow title={`${cls.class_name} – Öğrenci`} metric={cls.student} testid={`riba-close-${cls.school_class_id}-student`} />
+                      )}
+                    </React.Fragment>
+                  ))}
+                  {closePreview.participation?.teacher && (
+                    <CloseMetricRow title="Öğretmen – Okul Geneli" metric={closePreview.participation.teacher} testid="riba-close-teacher" />
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                  <button
+                    onClick={() => setCloseOpen(false)}
+                    data-testid="riba-close-continue"
+                    className="rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]"
+                  >
+                    Yanıt Toplamaya Devam Et
+                  </button>
+                  <button
+                    disabled
+                    data-testid="riba-close-confirm"
+                    className="cursor-not-allowed rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 px-5 py-2 text-sm font-bold text-white opacity-50"
+                  >
+                    Mevcut Katılımla Kapat
+                  </button>
+                </div>
+                <p className="mt-2 text-right text-xs text-slate-500" data-testid="riba-close-note">
+                  Kapatma işlemi bir sonraki aşamada etkinleştirilecektir.
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}
