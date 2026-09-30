@@ -457,12 +457,17 @@ export default function SchoolRibaManage() {
                     <Rocket size={16} /> Uygulamayı Başlat
                   </button>
                 </>
-              ) : (
+              ) : app.status === "active" ? (
                 <div className="flex items-start gap-2 text-sm text-slate-300" data-testid="riba-manage-active-info">
                   <Info size={16} className="mt-0.5 shrink-0 text-emerald-300/80" />
                   <p>RİBA uygulaması aktif. Katılımcılar için form bağlantıları oluşturuldu.</p>
                 </div>
-              )}
+              ) : app.status === "closed" ? (
+                <div className="flex items-start gap-2 text-sm text-slate-300" data-testid="riba-manage-closed-info">
+                  <Info size={16} className="mt-0.5 shrink-0 text-slate-400" />
+                  <p>RİBA uygulaması kapatılmıştır. Yeni yanıt kabul edilmemektedir.</p>
+                </div>
+              ) : null}
             </div>
 
             {/* Formlar ve QR (only when active) */}
