@@ -1,11 +1,17 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info, Link2, Copy, ExternalLink, Check } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+const PARTICIPANT_LABELS = {
+  student: "Öğrenci Formu",
+  parent: "Veli Formu",
+  teacher: "Öğretmen Formu",
+};
 
 const STATUS_LABELS = {
   draft: "Taslak",
@@ -43,6 +49,34 @@ export default function SchoolRibaManage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [activating, setActivating] = useState(false);
   const [activateError, setActivateError] = useState(null);
+  const [links, setLinks] = useState(null); // { parent: url, teacher: url }
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [linksError, setLinksError] = useState(null);
+  const [copiedType, setCopiedType] = useState(null);
+
+  const loadLinks = useCallback(async () => {
+    setLinksLoading(true);
+    setLinksError(null);
+    try {
+      const h = await authHeader();
+      if (!h) {
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      const res = await axios.get(`${API}/school/riba/applications/${applicationId}/access-links`, { headers: h });
+      // Backend is authoritative: only participant types actually present are shown.
+      const tokens = res.data.access_tokens || {};
+      const built = {};
+      Object.keys(tokens).forEach((ptype) => {
+        built[ptype] = `${window.location.origin}/riba/respond/${tokens[ptype]}`;
+      });
+      setLinks(built);
+    } catch (err) {
+      setLinksError("Form bağlantıları yüklenirken bir sorun oluştu. Lütfen tekrar deneyiniz.");
+    } finally {
+      setLinksLoading(false);
+    }
+  }, [navigate, applicationId]);
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -81,6 +115,22 @@ export default function SchoolRibaManage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (app?.status === "active") {
+      loadLinks();
+    }
+  }, [app?.status, loadLinks]);
+
+  const copyLink = async (ptype, url) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedType(ptype);
+      setTimeout(() => setCopiedType((c) => (c === ptype ? null : c)), 2000);
+    } catch {
+      // Clipboard blocked; do not break the app — user can select the URL manually.
+    }
+  };
 
   const closeModal = () => {
     if (activating) return;
@@ -250,6 +300,86 @@ export default function SchoolRibaManage() {
                 </div>
               )}
             </div>
+
+            {/* Formlar ve QR (only when active) */}
+            {app.status === "active" && (
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6" data-testid="riba-forms-section">
+                <div className="flex items-center gap-2">
+                  <Link2 size={16} className="text-emerald-300/80" />
+                  <h3 className="text-sm font-bold text-white">Formlar ve QR</h3>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  Katılımcı bağlantılarını paylaşarak RİBA formlarına erişim sağlayabilirsiniz.
+                </p>
+
+                {linksLoading && (
+                  <div className="mt-5 flex items-center gap-2 text-sm text-slate-400" data-testid="riba-forms-loading">
+                    <Loader2 size={16} className="animate-spin text-emerald-300" /> Bağlantılar yükleniyor…
+                  </div>
+                )}
+
+                {!linksLoading && linksError && (
+                  <div
+                    data-testid="riba-forms-error"
+                    className="mt-5 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20"
+                  >
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{linksError}</span>
+                  </div>
+                )}
+
+                {!linksLoading && !linksError && links && (
+                  <div className="mt-5 space-y-4" data-testid="riba-forms-list">
+                    {Object.keys(links).map((ptype) => {
+                      const url = links[ptype];
+                      const title = PARTICIPANT_LABELS[ptype] || ptype;
+                      const copied = copiedType === ptype;
+                      return (
+                        <div
+                          key={ptype}
+                          data-testid={`riba-form-card-${ptype}`}
+                          className="rounded-xl border border-white/10 bg-white/[0.02] p-4"
+                        >
+                          <p className="text-sm font-bold text-white" data-testid={`riba-form-title-${ptype}`}>{title}</p>
+                          <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center">
+                            <input
+                              readOnly
+                              value={url}
+                              data-testid={`riba-form-url-${ptype}`}
+                              onFocus={(e) => e.target.select()}
+                              className="w-full flex-1 truncate rounded-lg border border-white/10 bg-[#0b1120] px-3 py-2 text-xs text-slate-300 outline-none focus:border-emerald-400/60"
+                            />
+                            <div className="flex shrink-0 gap-2">
+                              <button
+                                onClick={() => copyLink(ptype, url)}
+                                data-testid={`riba-form-copy-${ptype}`}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-white/[0.06] px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]"
+                              >
+                                {copied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+                                {copied ? "Kopyalandı" : "Bağlantıyı Kopyala"}
+                              </button>
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                data-testid={`riba-form-open-${ptype}`}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-indigo-500 px-3 py-2 text-xs font-bold text-white transition hover:opacity-90"
+                              >
+                                <ExternalLink size={14} /> Formu Aç
+                              </a>
+                            </div>
+                          </div>
+                          {copied && (
+                            <p className="mt-2 text-xs text-emerald-300" data-testid={`riba-form-copied-${ptype}`}>
+                              Bağlantı kopyalandı.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </main>
