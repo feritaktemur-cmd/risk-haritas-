@@ -198,7 +198,7 @@ export default function SchoolRiba() {
                         Eğitim Öğretim Yılı: <span className="text-slate-200">{app.academic_year || "—"}</span>
                       </p>
                     </div>
-                    {app.status === "draft" && (
+                    {(app.status === "draft" || app.status === "active") && (
                       <button
                         onClick={() => navigate(`/school/riba/${app.id}`)}
                         data-testid={`riba-app-manage-${app.id}`}
