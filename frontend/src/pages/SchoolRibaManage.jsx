@@ -41,6 +41,8 @@ export default function SchoolRibaManage() {
   const [error, setError] = useState(null);
   const [app, setApp] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const [activateError, setActivateError] = useState(null);
 
   const load = useCallback(async () => {
     const h = await authHeader();
@@ -80,6 +82,43 @@ export default function SchoolRibaManage() {
     load();
   }, [load]);
 
+  const closeModal = () => {
+    if (activating) return;
+    setConfirmOpen(false);
+    setActivateError(null);
+  };
+
+  const activate = async () => {
+    if (activating) return;
+    setActivating(true);
+    setActivateError(null);
+    try {
+      const h = await authHeader();
+      if (!h) {
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      // Backend derives school_id from token and handles form pinning, access
+      // links, status and opened_at. No body / no client-generated fields.
+      await axios.post(`${API}/school/riba/applications/${applicationId}/activate`, {}, { headers: h });
+      setConfirmOpen(false);
+      await load();
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 409) {
+        setActivateError("Bu RİBA uygulaması artık başlatılamıyor.");
+      } else if (status === 401) {
+        await supabase.auth.signOut();
+        navigate("/school/login", { replace: true });
+        return;
+      } else {
+        setActivateError("RİBA uygulaması başlatılırken bir sorun oluştu. Lütfen tekrar deneyiniz.");
+      }
+    } finally {
+      setActivating(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#0b1120]" data-testid="riba-manage-loading">
@@ -91,6 +130,8 @@ export default function SchoolRibaManage() {
   const label = app ? (STATUS_LABELS[app.status] || app.status) : null;
   const badge = app ? (STATUS_STYLES[app.status] || "bg-white/10 text-slate-300 ring-white/20") : "";
   const created = app ? formatDate(app.created_at) : null;
+  const opened = app ? formatDate(app.opened_at) : null;
+  const isDraft = app?.status === "draft";
 
   return (
     <div className="min-h-screen bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(16,185,129,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(99,102,241,0.10),transparent)]">
@@ -146,6 +187,11 @@ export default function SchoolRibaManage() {
                     <CalendarDays size={14} /> Oluşturulma: <span className="text-slate-300">{created}</span>
                   </span>
                 )}
+                {opened && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <CalendarDays size={14} /> Başlangıç Tarihi: <span className="text-slate-300">{opened}</span>
+                  </span>
+                )}
               </div>
             </div>
 
@@ -179,32 +225,41 @@ export default function SchoolRibaManage() {
               </div>
             </div>
 
-            {/* Draft note + start */}
+            {/* Draft note + start / active info */}
             <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6" data-testid="riba-manage-start-area">
-              <div className="flex items-start gap-2 text-sm text-slate-300">
-                <Info size={16} className="mt-0.5 shrink-0 text-emerald-300/80" />
-                <p>
-                  Uygulama henüz başlamadı. Başlatıldığında katılımcı formları ve paylaşım bağlantıları oluşturulacaktır.
-                </p>
-              </div>
-              <button
-                onClick={() => setConfirmOpen(true)}
-                data-testid="riba-manage-start-btn"
-                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90"
-              >
-                <Rocket size={16} /> Uygulamayı Başlat
-              </button>
+              {isDraft ? (
+                <>
+                  <div className="flex items-start gap-2 text-sm text-slate-300">
+                    <Info size={16} className="mt-0.5 shrink-0 text-emerald-300/80" />
+                    <p>
+                      Uygulama henüz başlamadı. Başlatıldığında katılımcı formları ve paylaşım bağlantıları oluşturulacaktır.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => { setActivateError(null); setConfirmOpen(true); }}
+                    data-testid="riba-manage-start-btn"
+                    className="mt-5 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-6 py-2.5 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90"
+                  >
+                    <Rocket size={16} /> Uygulamayı Başlat
+                  </button>
+                </>
+              ) : (
+                <div className="flex items-start gap-2 text-sm text-slate-300" data-testid="riba-manage-active-info">
+                  <Info size={16} className="mt-0.5 shrink-0 text-emerald-300/80" />
+                  <p>RİBA uygulaması aktif. Katılımcılar için form bağlantıları oluşturuldu.</p>
+                </div>
+              )}
             </div>
           </>
         )}
       </main>
 
-      {/* Confirm modal (no backend call in this task) */}
+      {/* Confirm modal -> calls Activate API */}
       {confirmOpen && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
           data-testid="riba-start-modal"
-          onClick={() => setConfirmOpen(false)}
+          onClick={closeModal}
         >
           <div
             className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0f172a] p-6 shadow-2xl"
@@ -213,9 +268,10 @@ export default function SchoolRibaManage() {
             <div className="flex items-start justify-between gap-3">
               <h3 className="text-lg font-extrabold text-white">RİBA uygulamasını başlatmak istiyor musunuz?</h3>
               <button
-                onClick={() => setConfirmOpen(false)}
+                onClick={closeModal}
+                disabled={activating}
                 data-testid="riba-start-modal-close"
-                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
               >
                 <X size={18} />
               </button>
@@ -224,25 +280,35 @@ export default function SchoolRibaManage() {
               Uygulama başlatıldığında seçilen sınıflar ve ilgili RİBA formları uygulamaya bağlanacak, katılımcı
               bağlantıları oluşturulacaktır.
             </p>
+
+            {activateError && (
+              <div
+                data-testid="riba-start-error"
+                className="mt-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20"
+              >
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{activateError}</span>
+              </div>
+            )}
+
             <div className="mt-6 flex items-center justify-end gap-3">
               <button
-                onClick={() => setConfirmOpen(false)}
+                onClick={closeModal}
+                disabled={activating}
                 data-testid="riba-start-cancel"
-                className="rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]"
+                className="rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] disabled:opacity-40"
               >
                 Vazgeç
               </button>
               <button
-                disabled
+                onClick={activate}
+                disabled={activating}
                 data-testid="riba-start-confirm"
-                className="cursor-not-allowed rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2 text-sm font-bold text-white opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-indigo-500 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:opacity-50"
               >
-                Başlat
+                {activating ? <Loader2 size={14} className="animate-spin" /> : null}
+                {activating ? "Başlatılıyor…" : "Başlat"}
               </button>
             </div>
-            <p className="mt-3 text-right text-xs text-slate-500" data-testid="riba-start-note">
-              Başlatma işlemi sonraki adımda etkinleştirilecektir.
-            </p>
           </div>
         </div>
       )}
