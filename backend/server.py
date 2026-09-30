@@ -2596,6 +2596,192 @@ async def school_riba_close(application_id: str, request: Request):
     }
 
 
+def _riba_meb_code_sort_key(meb_code):
+    """Natural sort key for MEB target codes so 'M2' precedes 'M10' (avoids
+    lexical M1,M10,M11,M2 ordering). Falls back to the raw string when the
+    numeric part is absent. Presentation-only; no DB/schema impact."""
+    m = _re.search(r"(\d+)", meb_code or "")
+    return (0, int(m.group(1))) if m else (1, meb_code or "")
+
+
+@api.get("/school/riba/applications/{application_id}/results")
+async def school_riba_results(application_id: str, request: Request):
+    """Read-only RİBA results for a closed/finalized application.
+
+    Authoritative source is the FINAL SNAPSHOT only (riba_class_results,
+    riba_class_target_results, riba_school_target_results). ASP / average_asp /
+    rank are never recomputed; riba_responses/riba_answers/riba_calc are not
+    used. Targets are resolved from the application school's education level so
+    a same MEB code from another level can never bleed in. Returns NOTHING and
+    changes NOTHING in the DB.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,name,status,academic_year_id,opened_at,closed_at")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+    if app_row["status"] not in ("closed", "finalized"):
+        raise HTTPException(status_code=409, detail="Sonuçlar yalnızca kapatılmış uygulamalar için görüntülenebilir.")
+
+    def _snapshot_error():
+        logger.error("riba results: snapshot integrity mismatch for app %s", application_id)
+        raise HTTPException(status_code=500, detail="RİBA sonuç verileri okunurken bir tutarsızlık tespit edildi. Lütfen RAM ile iletişime geçiniz.")
+
+    # School / academic year / education level (metadata only).
+    srow = (
+        client.table("schools")
+        .select("name,education_level_id,education_level:education_levels(name)")
+        .eq("id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not srow:
+        _snapshot_error()
+    school_name = srow[0]["name"]
+    education_level_id = srow[0]["education_level_id"]
+    education_level_name = (srow[0].get("education_level") or {}).get("name")
+
+    ay = client.table("academic_years").select("name").eq("id", app_row["academic_year_id"]).limit(1).execute().data
+    academic_year = ay[0]["name"] if ay else None
+
+    # Education-level target universe (authoritative identity = target_id).
+    trows = (
+        client.table("riba_targets")
+        .select("id,meb_code,name")
+        .eq("education_level_id", education_level_id)
+        .execute()
+        .data
+    )
+    target_meta = {t["id"]: {"meb_code": t["meb_code"], "name": t["name"]} for t in trows}
+    level_target_ids = set(target_meta.keys())
+    if not level_target_ids:
+        _snapshot_error()
+    ordered_target_ids = sorted(level_target_ids, key=lambda tid: _riba_meb_code_sort_key(target_meta[tid]["meb_code"]))
+    expected_target_count = len(level_target_ids)
+
+    # Selected classes for this application.
+    ac = client.table("riba_application_classes").select("school_class_id").eq("application_id", application_id).execute().data
+    selected_class_ids = {r["school_class_id"] for r in ac}
+
+    # Class result headers.
+    crs = (
+        client.table("riba_class_results")
+        .select("id,school_class_id,student_response_count,parent_response_count,teacher_response_count")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    if len(crs) != len(selected_class_ids):
+        _snapshot_error()
+
+    # Class labels.
+    class_ids = [c["school_class_id"] for c in crs]
+    class_label = {}
+    if class_ids:
+        scls = client.table("school_classes").select("id,level,branch").in_("id", class_ids).execute().data
+        class_label = {s["id"]: f"{s['level']}/{s['branch']}" for s in scls}
+
+    # Class target snapshots (batched by class_result_id).
+    cr_ids = [c["id"] for c in crs]
+    ctr_by_cr = {cid: [] for cid in cr_ids}
+    if cr_ids:
+        ctr = (
+            client.table("riba_class_target_results")
+            .select("class_result_id,target_id,asp")
+            .in_("class_result_id", cr_ids)
+            .execute()
+            .data
+        )
+        for r in ctr:
+            crid = r["class_result_id"]
+            if crid in ctr_by_cr:
+                ctr_by_cr[crid].append(r)
+
+    class_results = []
+    for c in crs:
+        rows_for_cr = ctr_by_cr.get(c["id"], [])
+        asp_by_target = {r["target_id"]: r["asp"] for r in rows_for_cr}
+        # Integrity: exactly the level target set, once each.
+        if set(asp_by_target.keys()) != level_target_ids or len(rows_for_cr) != expected_target_count:
+            _snapshot_error()
+        targets = [
+            {
+                "target_id": tid,
+                "meb_code": target_meta[tid]["meb_code"],
+                "target_name": target_meta[tid]["name"],
+                "asp": asp_by_target[tid],
+            }
+            for tid in ordered_target_ids
+        ]
+        class_results.append({
+            "class_result_id": c["id"],
+            "school_class_id": c["school_class_id"],
+            "class_name": class_label.get(c["school_class_id"]),
+            "student_response_count": c["student_response_count"],
+            "parent_response_count": c["parent_response_count"],
+            "teacher_response_count": c["teacher_response_count"],
+            "targets": targets,
+        })
+
+    # School target snapshots.
+    srs = (
+        client.table("riba_school_target_results")
+        .select("target_id,class_count,average_asp,rank")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    sr_by_target = {r["target_id"]: r for r in srs}
+    if set(sr_by_target.keys()) != level_target_ids or len(srs) != expected_target_count:
+        _snapshot_error()
+    school_results = [
+        {
+            "target_id": tid,
+            "meb_code": target_meta[tid]["meb_code"],
+            "target_name": target_meta[tid]["name"],
+            "class_count": sr_by_target[tid]["class_count"],
+            "average_asp": sr_by_target[tid]["average_asp"],
+            "rank": sr_by_target[tid]["rank"],
+        }
+        for tid in ordered_target_ids
+    ]
+
+    application = {
+        "id": app_row["id"],
+        "name": app_row["name"],
+        "status": app_row["status"],
+        "school_name": school_name,
+        "academic_year": academic_year,
+        "education_level": education_level_name,
+        "education_level_id": education_level_id,
+        "opened_at": app_row["opened_at"],
+        "closed_at": app_row["closed_at"],
+        "classes": [
+            {"school_class_id": c["school_class_id"], "class_name": class_label.get(c["school_class_id"])}
+            for c in crs
+        ],
+    }
+
+    return {
+        "application": application,
+        "class_results": class_results,
+        "school_results": school_results,
+    }
+
+
+
 @api.get("/riba/respond/{token}")
 async def riba_public_respond_form(token: str, request: Request):
     """PUBLIC (no auth) read-only RİBA form fetch via access-link token.
