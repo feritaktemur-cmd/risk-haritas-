@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
-import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info, Link2, Copy, ExternalLink, Check } from "lucide-react";
+import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info, Link2, Copy, ExternalLink, Check, BarChart3, GraduationCap } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
@@ -41,6 +41,54 @@ function formatDate(iso) {
   return d.toLocaleDateString("tr-TR", { day: "2-digit", month: "long", year: "numeric" });
 }
 
+function formatPct(percentage) {
+  if (percentage === null || percentage === undefined) return "—";
+  // Round to 1 decimal for display only; backend value is authoritative.
+  const r = Math.round(percentage * 10) / 10;
+  return `%${Number.isInteger(r) ? r : r.toFixed(1)}`;
+}
+
+// Visual bar width is capped at 100% so the UI never overflows, while the
+// written percentage above shows the real (possibly >100%) backend value.
+function barWidth(percentage) {
+  if (percentage === null || percentage === undefined) return 0;
+  return Math.max(0, Math.min(100, percentage));
+}
+
+function ParticipantMetric({ label, icon, metric, testid }) {
+  const met = metric.meets_30_percent === true;
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3.5" data-testid={testid}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-bold text-white">
+          {icon}
+          {label}
+        </div>
+        <div className="text-right">
+          <p className="text-sm font-bold text-white" data-testid={`${testid}-count`}>
+            {metric.response_count} / {metric.denominator} yanıt
+          </p>
+          <p className="text-xs text-slate-400" data-testid={`${testid}-pct`}>{formatPct(metric.percentage)}</p>
+        </div>
+      </div>
+      <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-white/[0.06]">
+        <div
+          className={`h-full rounded-full transition-all ${met ? "bg-emerald-500" : "bg-indigo-500/70"}`}
+          style={{ width: `${barWidth(metric.percentage)}%` }}
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+        <span className="text-slate-400">Minimum hedef: <span className="text-slate-200">{metric.minimum_required}</span></span>
+        {met ? (
+          <span className="font-semibold text-emerald-300" data-testid={`${testid}-target`}>%30 hedefe ulaşıldı</span>
+        ) : (
+          <span className="text-slate-500" data-testid={`${testid}-target`}>%30 hedef henüz tamamlanmadı</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SchoolRibaManage() {
   const navigate = useNavigate();
   const { applicationId } = useParams();
@@ -54,6 +102,27 @@ export default function SchoolRibaManage() {
   const [linksLoading, setLinksLoading] = useState(false);
   const [linksError, setLinksError] = useState(null);
   const [copiedType, setCopiedType] = useState(null);
+  const [participation, setParticipation] = useState(null);
+  const [partLoading, setPartLoading] = useState(false);
+  const [partError, setPartError] = useState(null);
+
+  const loadParticipation = useCallback(async () => {
+    setPartLoading(true);
+    setPartError(null);
+    try {
+      const h = await authHeader();
+      if (!h) {
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      const res = await axios.get(`${API}/school/riba/applications/${applicationId}/participation`, { headers: h });
+      setParticipation(res.data);
+    } catch (err) {
+      setPartError("Katılım bilgileri yüklenirken bir sorun oluştu. Lütfen tekrar deneyiniz.");
+    } finally {
+      setPartLoading(false);
+    }
+  }, [navigate, applicationId]);
 
   const loadLinks = useCallback(async () => {
     setLinksLoading(true);
@@ -120,8 +189,9 @@ export default function SchoolRibaManage() {
   useEffect(() => {
     if (app?.status === "active") {
       loadLinks();
+      loadParticipation();
     }
-  }, [app?.status, loadLinks]);
+  }, [app?.status, loadLinks, loadParticipation]);
 
   const copyLink = async (ptype, url) => {
     try {
@@ -393,6 +463,79 @@ export default function SchoolRibaManage() {
                 )}
               </div>
             )}
+
+            {/* Katılım Takibi (only when active) */}
+            {app.status === "active" && (
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-6" data-testid="riba-participation-section">
+                <div className="flex items-center gap-2">
+                  <BarChart3 size={16} className="text-emerald-300/80" />
+                  <h3 className="text-sm font-bold text-white">Katılım Takibi</h3>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  RİBA formlarına gelen yanıtları ve %30 katılım hedefini takip edebilirsiniz.
+                </p>
+
+                {partLoading && (
+                  <div className="mt-5 flex items-center gap-2 text-sm text-slate-400" data-testid="riba-participation-loading">
+                    <Loader2 size={16} className="animate-spin text-emerald-300" /> Katılım bilgileri yükleniyor…
+                  </div>
+                )}
+
+                {!partLoading && partError && (
+                  <div
+                    data-testid="riba-participation-error"
+                    className="mt-5 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20"
+                  >
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{partError}</span>
+                  </div>
+                )}
+
+                {!partLoading && !partError && participation && (
+                  <div className="mt-5 space-y-4" data-testid="riba-participation-body">
+                    {(participation.classes || []).map((cls) => (
+                      <div
+                        key={cls.school_class_id}
+                        data-testid={`riba-part-class-${cls.school_class_id}`}
+                        className="rounded-xl border border-white/10 bg-white/[0.02] p-4"
+                      >
+                        <p className="text-sm font-extrabold text-white">{cls.class_name}</p>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          {cls.parent && (
+                            <ParticipantMetric
+                              label="Veli"
+                              icon={<Users size={15} className="text-slate-400" />}
+                              metric={cls.parent}
+                              testid={`riba-part-${cls.school_class_id}-parent`}
+                            />
+                          )}
+                          {cls.student && (
+                            <ParticipantMetric
+                              label="Öğrenci"
+                              icon={<GraduationCap size={15} className="text-slate-400" />}
+                              metric={cls.student}
+                              testid={`riba-part-${cls.school_class_id}-student`}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                    {participation.teacher && (
+                      <div data-testid="riba-part-teacher-card">
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Okul Geneli</p>
+                        <ParticipantMetric
+                          label="Öğretmen"
+                          icon={<Users size={15} className="text-slate-400" />}
+                          metric={participation.teacher}
+                          testid="riba-part-teacher"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
           </>
         )}
       </main>
