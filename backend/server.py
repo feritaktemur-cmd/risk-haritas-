@@ -2621,7 +2621,7 @@ async def school_riba_results(application_id: str, request: Request):
 
     rows = (
         client.table("riba_applications")
-        .select("id,school_id,name,status,academic_year_id,opened_at,closed_at")
+        .select("id,school_id,name,status,academic_year_id,opened_at,closed_at,finalized_at,special_target_1_id,special_target_2_id")
         .eq("id", application_id)
         .eq("school_id", school_id)
         .limit(1)
@@ -2758,6 +2758,25 @@ async def school_riba_results(application_id: str, request: Request):
         for tid in ordered_target_ids
     ]
 
+    # Special targets (only populated ones). Resolved from the level target_meta
+    # already built above (authoritative identity = target_id; no meb_code auth).
+    st_ids = [tid for tid in (app_row.get("special_target_1_id"), app_row.get("special_target_2_id")) if tid]
+    special_targets = [
+        {"target_id": tid, "meb_code": target_meta[tid]["meb_code"], "target_name": target_meta[tid]["name"]}
+        for tid in st_ids
+        if tid in target_meta
+    ]
+    # Finalized integrity fail-safe: a finalized app MUST carry exactly two
+    # distinct special targets that belong to this level's target set.
+    if app_row["status"] == "finalized":
+        if (
+            app_row.get("special_target_1_id") is None
+            or app_row.get("special_target_2_id") is None
+            or app_row["special_target_1_id"] == app_row["special_target_2_id"]
+            or len(special_targets) != 2
+        ):
+            _snapshot_error()
+
     application = {
         "id": app_row["id"],
         "name": app_row["name"],
@@ -2768,6 +2787,8 @@ async def school_riba_results(application_id: str, request: Request):
         "education_level_id": education_level_id,
         "opened_at": app_row["opened_at"],
         "closed_at": app_row["closed_at"],
+        "finalized_at": app_row.get("finalized_at"),
+        "special_targets": special_targets,
         "classes": [
             {"school_class_id": c["school_class_id"], "class_name": class_label.get(c["school_class_id"])}
             for c in crs
@@ -2780,6 +2801,109 @@ async def school_riba_results(application_id: str, request: Request):
         "school_results": school_results,
     }
 
+
+@api.post("/school/riba/applications/{application_id}/finalize")
+async def school_riba_finalize(application_id: str, request: Request):
+    """Finalize a CLOSED RİBA application by recording the two counselor-chosen
+    special targets. Selection is a manual professional decision: nothing is
+    auto-suggested from ASP/rank, and a NULL ASP does NOT block a target. Both
+    targets must exist, belong to the school's education level and be part of
+    this application's final school-result snapshot set. A single conditional
+    row update (status='closed' guard) makes this atomic; no other table is
+    written. Identity is target_id (never meb_code).
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    st1 = (body or {}).get("special_target_1_id")
+    st2 = (body or {}).get("special_target_2_id")
+
+    if not st1 or not st2:
+        raise HTTPException(status_code=422, detail="Lütfen iki özel hedef de seçiniz.")
+    if st1 == st2:
+        raise HTTPException(status_code=422, detail="İki özel hedef birbirinden farklı olmalıdır.")
+
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,status")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+    if app_row["status"] != "closed":
+        raise HTTPException(status_code=409, detail="Yalnızca kapatılmış uygulamalar sonuçlandırılabilir.")
+
+    # Education level (authoritative, from the school relation).
+    srow = client.table("schools").select("education_level_id").eq("id", school_id).limit(1).execute().data
+    education_level_id = srow[0]["education_level_id"] if srow else None
+    if education_level_id is None:
+        raise HTTPException(status_code=400, detail="Okul eğitim kademesi belirlenemedi.")
+
+    # Both targets must belong to this education level (identity = target_id).
+    level_rows = (
+        client.table("riba_targets")
+        .select("id")
+        .eq("education_level_id", education_level_id)
+        .in_("id", [st1, st2])
+        .execute()
+        .data
+    )
+    level_target_ids = {r["id"] for r in level_rows}
+    if st1 not in level_target_ids or st2 not in level_target_ids:
+        raise HTTPException(status_code=422, detail="Seçilen özel hedefler bu eğitim kademesine ait değil.")
+
+    # Both targets must be part of THIS application's final school snapshot set.
+    snap_rows = (
+        client.table("riba_school_target_results")
+        .select("target_id")
+        .eq("application_id", application_id)
+        .in_("target_id", [st1, st2])
+        .execute()
+        .data
+    )
+    snap_target_ids = {r["target_id"] for r in snap_rows}
+    if st1 not in snap_target_ids or st2 not in snap_target_ids:
+        raise HTTPException(status_code=422, detail="Seçilen özel hedefler bu uygulamanın sonuç kümesinde bulunmuyor.")
+
+    finalized_at = datetime.now(timezone.utc).isoformat()
+    try:
+        updated = (
+            client.table("riba_applications")
+            .update({
+                "special_target_1_id": st1,
+                "special_target_2_id": st2,
+                "status": "finalized",
+                "finalized_at": finalized_at,
+            })
+            .eq("id", application_id)
+            .eq("school_id", school_id)
+            .eq("status", "closed")
+            .execute()
+            .data
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("riba finalize: update failed for app %s", application_id)
+        raise HTTPException(status_code=500, detail="RİBA uygulaması sonuçlandırılırken bir sorun oluştu. Lütfen tekrar deneyiniz.")
+    if not updated:
+        raise HTTPException(status_code=409, detail="RİBA uygulaması sonuçlandırılamadı. Durumu değişmiş olabilir.")
+
+    return {
+        "application_id": application_id,
+        "status": "finalized",
+        "finalized_at": finalized_at,
+        "special_target_1_id": st1,
+        "special_target_2_id": st2,
+    }
 
 
 @api.get("/riba/respond/{token}")
