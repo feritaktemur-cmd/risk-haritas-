@@ -2004,39 +2004,17 @@ async def school_riba_get_access_links(application_id: str, request: Request):
     }
 
 
-@api.get("/school/riba/applications/{application_id}/participation")
-async def school_riba_participation(application_id: str, request: Request):
-    """Read-only participation tracking for an ACTIVE RİBA application.
+def _riba_build_participation(client, application_id, school_id, app_row):
+    """Authoritative, read-only RİBA participation computation (single source
+    of truth, reused by /participation and /close-preview).
 
-    Denominators come from AUTHORITATIVE existing data only:
-      * student / parent per class -> real enrolled-student count of that class
-        for the application's academic year (student_class_enrollments).
-      * teacher -> riba_applications.teacher_count (school-wide).
-    Response counts are raw riba_responses counts (no identity inference; the
-    student model has no duplicate protection, so counts may exceed the
-    denominator and percentages are NOT capped). Bound participant types come
-    from riba_application_forms -> riba_forms.participant_type; types that are
-    not bound get NO fabricated data. This endpoint changes NOTHING and does
-    NOT compute any RİBA/ASP statistics.
+    Denominators: student/parent per class -> real enrolled-student count of
+    that class for the application's academic year (student_class_enrollments);
+    teacher -> riba_applications.teacher_count (school-wide). Response counts
+    are raw riba_responses counts (no identity inference; not capped). Bound
+    participant types come from riba_application_forms -> riba_forms; unbound
+    types get NO fabricated data. Computes NOTHING statistical (no ASP).
     """
-    _uid, acc = _require_school_ready(request)
-    client = get_service_client()
-    school_id = acc["school_id"]
-
-    # Ownership check (never trust the path for scope; safe 404 pattern).
-    rows = (
-        client.table("riba_applications")
-        .select("id,school_id,status,teacher_count,academic_year_id")
-        .eq("id", application_id)
-        .eq("school_id", school_id)
-        .limit(1)
-        .execute()
-        .data
-    )
-    app_row = rows[0] if rows else None
-    if app_row is None:
-        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
-
     academic_year_id = app_row["academic_year_id"]
     teacher_count = app_row["teacher_count"]
 
@@ -2149,6 +2127,101 @@ async def school_riba_participation(application_id: str, request: Request):
         result["teacher"] = _metrics(teacher_resp, teacher_count)
 
     return result
+
+
+@api.get("/school/riba/applications/{application_id}/participation")
+async def school_riba_participation(application_id: str, request: Request):
+    """Read-only participation tracking for a RİBA application. Uses the shared
+    authoritative helper _riba_build_participation (single source of truth).
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    # Ownership check (never trust the path for scope; safe 404 pattern).
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,status,teacher_count,academic_year_id")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+
+    return _riba_build_participation(client, application_id, school_id, app_row)
+
+
+@api.get("/school/riba/applications/{application_id}/close-preview")
+async def school_riba_close_preview(application_id: str, request: Request):
+    """Read-only pre-close check for an ACTIVE RİBA application.
+
+    Surfaces the current participation and which participant/class metrics are
+    below the 30% target, so the counselor can decide before closing. The 30%
+    target is ADVISORY only: low participation NEVER blocks closing, so
+    can_close is always True here (barring future real integrity blockers).
+    Read-only: writes NOTHING and computes no RİBA/ASP statistics.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,status,teacher_count,academic_year_id")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+    if app_row["status"] != "active":
+        raise HTTPException(status_code=409, detail="Yalnızca aktif durumdaki uygulamalar için kapatma ön kontrolü yapılabilir.")
+
+    participation = _riba_build_participation(client, application_id, school_id, app_row)
+
+    warnings = []
+
+    def _add_warning(ptype, class_id, class_name, metric):
+        # Only real below-target cases. A denominator of 0 means minimum_required
+        # is 0 and meets_30_percent is False by helper semantics; that is NOT a
+        # genuine below-target situation, so never warn on it.
+        if metric["denominator"] <= 0:
+            return
+        if metric["meets_30_percent"]:
+            return
+        warnings.append({
+            "participant_type": ptype,
+            "school_class_id": class_id,
+            "class_name": class_name,
+            "response_count": metric["response_count"],
+            "denominator": metric["denominator"],
+            "percentage": metric["percentage"],
+            "minimum_required": metric["minimum_required"],
+        })
+
+    for cls in participation["classes"]:
+        if "parent" in cls:
+            _add_warning("parent", cls["school_class_id"], cls["class_name"], cls["parent"])
+        if "student" in cls:
+            _add_warning("student", cls["school_class_id"], cls["class_name"], cls["student"])
+    if "teacher" in participation:
+        _add_warning("teacher", None, None, participation["teacher"])
+
+    return {
+        "application_id": application_id,
+        "status": app_row["status"],
+        "can_close": True,
+        "has_below_target": len(warnings) > 0,
+        "warnings": warnings,
+        "participation": participation,
+    }
 
 
 
