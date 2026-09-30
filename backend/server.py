@@ -19,6 +19,12 @@ from excel_preview import analyze_rows, load_reference, plan_import, VALID_MANAG
 from students_excel import analyze_student_rows
 from admin_accounts import generate_username, generate_temp_password, synth_email_for
 from riba_link_token import generate_link_token, hash_link_token, RibaLinkTokenError
+from riba_calc import (
+    build_target_frequencies,
+    compute_class_target_results,
+    compute_school_target_results,
+    RibaAnswerError,
+)
 import re as _re
 import math as _math
 
@@ -2223,6 +2229,371 @@ async def school_riba_close_preview(application_id: str, request: Request):
         "participation": participation,
     }
 
+
+def _riba_read_response_ids(client, application_id):
+    """Authoritative current response ID set for an application (for the
+    stabilization barrier). Returns a Python set of response id strings."""
+    rows = (
+        client.table("riba_responses")
+        .select("id")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    return {r["id"] for r in rows}
+
+
+def _riba_compute_close_plan(client, application_id, education_level_id,
+                             app_class_ids, bound_form_ids, bound_types,
+                             target_ids, response_ids):
+    """Pure-ish in-memory computation of close snapshots over an EXACT response
+    ID set (no DB writes). Uses only riba_calc.py math. Returns a plan dict:
+        {
+          "classes": [ {school_class_id, counts:{student,parent,teacher},
+                        target_rows:{target_id: calc_row}, class_asps:{tid: asp}} ],
+          "school": {target_id: {class_count, average_asp, rank}},
+        }
+    Raises RibaAnswerError / ValueError on genuine data-integrity problems.
+    """
+    if not response_ids:
+        response_rows = []
+    else:
+        response_rows = (
+            client.table("riba_responses")
+            .select("id,participant_type,school_class_id,form_id")
+            .eq("application_id", application_id)
+            .execute()
+            .data
+        )
+        # Keep only the authoritative frozen set.
+        response_rows = [r for r in response_rows if r["id"] in response_ids]
+
+    # Frozen questions grouped by form_id (full question list per bound form).
+    questions_by_form = {}
+    if bound_form_ids:
+        qrows = (
+            client.table("riba_questions")
+            .select("id,form_id,option_a_target_id,option_b_target_id")
+            .in_("form_id", bound_form_ids)
+            .execute()
+            .data
+        )
+        for q in qrows:
+            questions_by_form.setdefault(q["form_id"], []).append({
+                "question_id": q["id"],
+                "option_a_target_id": q["option_a_target_id"],
+                "option_b_target_id": q["option_b_target_id"],
+            })
+
+    # Answers for the frozen response set (batched).
+    answers_by_response = {}
+    resp_ids = [r["id"] for r in response_rows]
+    if resp_ids:
+        arows = (
+            client.table("riba_answers")
+            .select("response_id,question_id,selected_option")
+            .in_("response_id", resp_ids)
+            .execute()
+            .data
+        )
+        for a in arows:
+            answers_by_response.setdefault(a["response_id"], []).append({
+                "question_id": a["question_id"],
+                "selected_option": a["selected_option"],
+            })
+
+    # Per class -> per group -> aggregated target frequencies + response counts.
+    # group_freq[class_id][group] = {target_id: F}   (only for bound groups)
+    group_freq = {cid: {} for cid in app_class_ids}
+    counts = {cid: {"student": 0, "parent": 0, "teacher": 0} for cid in app_class_ids}
+
+    for r in response_rows:
+        cid = r["school_class_id"]
+        ptype = r["participant_type"]
+        if cid not in group_freq:
+            # Response for a class not bound to the application: genuine integrity issue.
+            raise ValueError("Uygulamaya bağlı olmayan bir sınıfa ait yanıt bulundu.")
+        if ptype not in bound_types:
+            raise ValueError("Uygulamaya bağlı olmayan bir katılımcı türüne ait yanıt bulundu.")
+        counts[cid][ptype] = counts[cid].get(ptype, 0) + 1
+
+        form_questions = questions_by_form.get(r["form_id"])
+        if not form_questions:
+            raise ValueError("Yanıta ait dondurulmuş form soruları bulunamadı.")
+        resp_answers = answers_by_response.get(r["id"], [])
+        # Raises RibaAnswerError on missing/extra/invalid answers (full form required).
+        freqs = build_target_frequencies(form_questions, resp_answers)
+        bucket = group_freq[cid].setdefault(ptype, {})
+        for tid, f in freqs.items():
+            bucket[tid] = bucket.get(tid, 0) + f
+
+    # Compute per-class target results + collect class ASPs.
+    classes_plan = []
+    class_asps_list = []
+    for cid in app_class_ids:
+        # Pass a freq dict for every BOUND group (empty dict => all F=0, valid).
+        gfreq = {}
+        for g in ("student", "parent", "teacher"):
+            if g in bound_types:
+                gfreq[g] = group_freq[cid].get(g, {})
+        target_rows = compute_class_target_results(education_level_id, target_ids, gfreq)
+        class_asps = {t: target_rows[t]["asp"] for t in target_ids}
+        classes_plan.append({
+            "school_class_id": cid,
+            "counts": counts[cid],
+            "target_rows": target_rows,
+            "class_asps": class_asps,
+        })
+        class_asps_list.append(class_asps)
+
+    school = compute_school_target_results(target_ids, class_asps_list)
+    return {"classes": classes_plan, "school": school}
+
+
+@api.post("/school/riba/applications/{application_id}/close")
+async def school_riba_close(application_id: str, request: Request):
+    """Close an ACTIVE RİBA application: freeze intake, compute the official
+    snapshots (via riba_calc) and persist them, then flip status to 'closed'.
+
+    No DB transaction exists in this stack, so this uses a fail-safe order plus
+    compensating cleanup: access links are deactivated first, a response-set
+    stabilization barrier guarantees the snapshot reflects a settled set, and
+    any failure after writes begins rolls everything this call created back and
+    re-activates the links, leaving the application 'active'. Uses ONLY frozen
+    activation-bound forms; never re-selects forms at close time.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,status,academic_year_id")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+    if app_row["status"] != "active":
+        raise HTTPException(status_code=409, detail="Yalnızca aktif durumdaki uygulamalar kapatılabilir.")
+
+    # Refuse to touch unexpected pre-existing snapshots (never overwrite/auto-delete).
+    existing_cr = (
+        client.table("riba_class_results").select("id").eq("application_id", application_id).limit(1).execute().data
+    )
+    existing_sr = (
+        client.table("riba_school_target_results").select("id").eq("application_id", application_id).limit(1).execute().data
+    )
+    if existing_cr or existing_sr:
+        raise HTTPException(
+            status_code=409,
+            detail="Bu uygulama için beklenmeyen sonuç kayıtları mevcut. Kapatma güvenli değil.",
+        )
+
+    # Education level from the AUTHORITATIVE school relation (never the client).
+    srow = (
+        client.table("schools").select("education_level_id").eq("id", school_id).limit(1).execute().data
+    )
+    education_level_id = srow[0]["education_level_id"] if srow else None
+    if education_level_id not in (1, 2, 3, 4):
+        raise HTTPException(status_code=400, detail="Bu eğitim kademesi için RİBA kapatma yapılamaz.")
+
+    # Frozen bound forms + their participant types (pinned at activation).
+    bf = (
+        client.table("riba_application_forms").select("form_id").eq("application_id", application_id).execute().data
+    )
+    bound_form_ids = [b["form_id"] for b in bf]
+    if not bound_form_ids:
+        raise HTTPException(status_code=409, detail="Uygulamaya bağlı dondurulmuş form bulunamadı. Kapatma yapılamaz.")
+    frows = client.table("riba_forms").select("id,participant_type").in_("id", bound_form_ids).execute().data
+    bound_types = {f["participant_type"] for f in frows}
+
+    # Selected classes.
+    ac = (
+        client.table("riba_application_classes").select("school_class_id").eq("application_id", application_id).execute().data
+    )
+    app_class_ids = sorted({r["school_class_id"] for r in ac})
+    if not app_class_ids:
+        raise HTTPException(status_code=409, detail="Uygulamaya bağlı sınıf bulunamadı. Kapatma yapılamaz.")
+
+    # Target universe for the education level.
+    trows = (
+        client.table("riba_targets").select("id").eq("education_level_id", education_level_id).execute().data
+    )
+    target_ids = sorted({t["id"] for t in trows})
+    if not target_ids:
+        raise HTTPException(status_code=409, detail="Bu kademe için tanımlı RİBA hedefi bulunamadı. Kapatma yapılamaz.")
+
+    # ---- Freeze new intake FIRST (links inactive). ----
+    def _reactivate_links():
+        try:
+            client.table("riba_access_links").update({"is_active": True}).eq("application_id", application_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba close: link re-activation failed")
+
+    try:
+        client.table("riba_access_links").update({"is_active": False}).eq("application_id", application_id).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("riba close: link deactivation failed")
+        raise HTTPException(status_code=500, detail="RİBA kapatma sırasında bir sorun oluştu. Lütfen tekrar deneyiniz.")
+
+    # ---- Response-set stabilization barrier (max 2 recompute attempts). ----
+    plan = None
+    try:
+        s_prev = _riba_read_response_ids(client, application_id)
+        stabilized = False
+        for _attempt in range(3):  # initial + up to 2 recomputes
+            plan = _riba_compute_close_plan(
+                client, application_id, education_level_id, app_class_ids,
+                bound_form_ids, bound_types, target_ids, s_prev,
+            )
+            s_now = _riba_read_response_ids(client, application_id)
+            if s_now == s_prev:
+                stabilized = True
+                break
+            s_prev = s_now  # recompute against the new authoritative set
+        if not stabilized:
+            _reactivate_links()
+            raise HTTPException(status_code=409, detail="Yanıtlar kapatma sırasında değişmeye devam etti. Lütfen tekrar deneyiniz.")
+    except (RibaAnswerError, ValueError):
+        logger.exception("riba close: data-integrity error during computation")
+        _reactivate_links()
+        raise HTTPException(status_code=422, detail="RİBA yanıt verilerinde bütünlük sorunu tespit edildi. Kapatma yapılamadı.")
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception("riba close: unexpected error during computation")
+        _reactivate_links()
+        raise HTTPException(status_code=500, detail="RİBA kapatma sırasında bir sorun oluştu. Lütfen tekrar deneyiniz.")
+
+    # ---- Snapshot write (with compensating cleanup on any failure). ----
+    def _cleanup_snapshots():
+        # class_target_results are removed via ON DELETE CASCADE from class_results.
+        try:
+            client.table("riba_school_target_results").delete().eq("application_id", application_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba close: school snapshot cleanup failed")
+        try:
+            client.table("riba_class_results").delete().eq("application_id", application_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba close: class snapshot cleanup failed")
+
+    def _abort(status_code, detail):
+        _cleanup_snapshots()
+        _reactivate_links()
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    try:
+        # A) class result headers.
+        header_payload = [
+            {
+                "application_id": application_id,
+                "school_class_id": c["school_class_id"],
+                "student_response_count": c["counts"].get("student", 0),
+                "parent_response_count": c["counts"].get("parent", 0),
+                "teacher_response_count": c["counts"].get("teacher", 0),
+            }
+            for c in plan["classes"]
+        ]
+        inserted_headers = client.table("riba_class_results").insert(header_payload).execute().data
+        cr_id_by_class = {h["school_class_id"]: h["id"] for h in inserted_headers}
+
+        # B) class target results (class x every target).
+        ctr_payload = []
+        for c in plan["classes"]:
+            crid = cr_id_by_class.get(c["school_class_id"])
+            for tid in target_ids:
+                row = c["target_rows"][tid]
+                ctr_payload.append({
+                    "class_result_id": crid,
+                    "target_id": tid,
+                    "student_frequency": row.get("student_frequency"),
+                    "student_mean": row.get("student_mean"),
+                    "student_stddev": row.get("student_stddev"),
+                    "student_standard_score": row.get("student_standard_score"),
+                    "parent_frequency": row.get("parent_frequency"),
+                    "parent_mean": row.get("parent_mean"),
+                    "parent_stddev": row.get("parent_stddev"),
+                    "parent_standard_score": row.get("parent_standard_score"),
+                    "teacher_frequency": row.get("teacher_frequency"),
+                    "teacher_mean": row.get("teacher_mean"),
+                    "teacher_stddev": row.get("teacher_stddev"),
+                    "teacher_standard_score": row.get("teacher_standard_score"),
+                    "asp": row.get("asp"),
+                })
+        # Chunk large inserts to stay well within request limits.
+        for i in range(0, len(ctr_payload), 500):
+            client.table("riba_class_target_results").insert(ctr_payload[i:i + 500]).execute()
+
+        # C) school target results (every target).
+        str_payload = [
+            {
+                "application_id": application_id,
+                "target_id": tid,
+                "class_count": plan["school"][tid]["class_count"],
+                "average_asp": plan["school"][tid]["average_asp"],
+                "rank": plan["school"][tid]["rank"],
+            }
+            for tid in target_ids
+        ]
+        client.table("riba_school_target_results").insert(str_payload).execute()
+    except Exception:  # noqa: BLE001
+        logger.exception("riba close: snapshot write failed; compensating cleanup")
+        _abort(500, "RİBA sonuçları kaydedilemedi. Lütfen tekrar deneyiniz.")
+
+    # ---- Integrity read-back before flipping status. ----
+    try:
+        cr_back = client.table("riba_class_results").select("id,school_class_id").eq("application_id", application_id).execute().data
+        sr_back = client.table("riba_school_target_results").select("id").eq("application_id", application_id).execute().data
+        cr_ids = [r["id"] for r in cr_back]
+        ctr_count = 0
+        if cr_ids:
+            for i in range(0, len(cr_ids), 100):
+                chunk = cr_ids[i:i + 100]
+                ctr_rows = client.table("riba_class_target_results").select("class_result_id").in_("class_result_id", chunk).execute().data
+                ctr_count += len(ctr_rows)
+    except Exception:  # noqa: BLE001
+        logger.exception("riba close: integrity read-back failed")
+        _abort(500, "RİBA sonuç bütünlüğü doğrulanamadı. Lütfen tekrar deneyiniz.")
+
+    expected_cr = len(app_class_ids)
+    expected_str = len(target_ids)
+    expected_ctr = len(app_class_ids) * len(target_ids)
+    if len(cr_back) != expected_cr or len(sr_back) != expected_str or ctr_count != expected_ctr:
+        logger.error("riba close: integrity mismatch cr=%s/%s ctr=%s/%s sr=%s/%s",
+                     len(cr_back), expected_cr, ctr_count, expected_ctr, len(sr_back), expected_str)
+        _abort(500, "RİBA sonuç bütünlüğü doğrulanamadı. Lütfen tekrar deneyiniz.")
+
+    # ---- Flip to closed LAST (conditional on still being active). ----
+    closed_at = datetime.now(timezone.utc).isoformat()
+    try:
+        updated = (
+            client.table("riba_applications")
+            .update({"status": "closed", "closed_at": closed_at})
+            .eq("id", application_id)
+            .eq("school_id", school_id)
+            .eq("status", "active")
+            .execute()
+            .data
+        )
+    except Exception:  # noqa: BLE001
+        updated = None
+    if not updated:
+        logger.error("riba close: final status update changed no row; rolling back")
+        _abort(500, "RİBA uygulaması kapatılamadı. Lütfen tekrar deneyiniz.")
+
+    return {
+        "application_id": application_id,
+        "status": "closed",
+        "closed_at": closed_at,
+        "class_result_count": expected_cr,
+        "class_target_result_count": expected_ctr,
+        "school_target_result_count": expected_str,
+    }
 
 
 @api.get("/riba/respond/{token}")
