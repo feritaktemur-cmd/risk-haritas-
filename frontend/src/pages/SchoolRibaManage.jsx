@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import { Loader2, ClipboardList, ArrowLeft, AlertTriangle, Users, CalendarDays, Rocket, X, Info, Link2, Copy, ExternalLink, Check } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
@@ -340,39 +341,51 @@ export default function SchoolRibaManage() {
                           className="rounded-xl border border-white/10 bg-white/[0.02] p-4"
                         >
                           <p className="text-sm font-bold text-white" data-testid={`riba-form-title-${ptype}`}>{title}</p>
-                          <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center">
-                            <input
-                              readOnly
-                              value={url}
-                              data-testid={`riba-form-url-${ptype}`}
-                              onFocus={(e) => e.target.select()}
-                              className="w-full flex-1 truncate rounded-lg border border-white/10 bg-[#0b1120] px-3 py-2 text-xs text-slate-300 outline-none focus:border-emerald-400/60"
-                            />
-                            <div className="flex shrink-0 gap-2">
-                              <button
-                                onClick={() => copyLink(ptype, url)}
-                                data-testid={`riba-form-copy-${ptype}`}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-white/[0.06] px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]"
-                              >
-                                {copied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
-                                {copied ? "Kopyalandı" : "Bağlantıyı Kopyala"}
-                              </button>
-                              <a
-                                href={url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                data-testid={`riba-form-open-${ptype}`}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-indigo-500 px-3 py-2 text-xs font-bold text-white transition hover:opacity-90"
-                              >
-                                <ExternalLink size={14} /> Formu Aç
-                              </a>
+                          <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-start">
+                            <div className="flex flex-col items-center gap-1.5" data-testid={`riba-form-qr-${ptype}`}>
+                              <div className="rounded-xl bg-white p-3">
+                                <QRCodeSVG value={url} size={148} level="M" marginSize={0} />
+                              </div>
+                              <p className="max-w-[160px] text-center text-[11px] leading-tight text-slate-400">
+                                Telefon kamerasıyla tarayarak forma ulaşabilirsiniz.
+                              </p>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                                <input
+                                  readOnly
+                                  value={url}
+                                  data-testid={`riba-form-url-${ptype}`}
+                                  onFocus={(e) => e.target.select()}
+                                  className="w-full flex-1 truncate rounded-lg border border-white/10 bg-[#0b1120] px-3 py-2 text-xs text-slate-300 outline-none focus:border-emerald-400/60"
+                                />
+                              </div>
+                              <div className="mt-3 flex gap-2">
+                                <button
+                                  onClick={() => copyLink(ptype, url)}
+                                  data-testid={`riba-form-copy-${ptype}`}
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-white/[0.06] px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]"
+                                >
+                                  {copied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+                                  {copied ? "Kopyalandı" : "Bağlantıyı Kopyala"}
+                                </button>
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  data-testid={`riba-form-open-${ptype}`}
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-indigo-500 px-3 py-2 text-xs font-bold text-white transition hover:opacity-90"
+                                >
+                                  <ExternalLink size={14} /> Formu Aç
+                                </a>
+                              </div>
+                              {copied && (
+                                <p className="mt-2 text-xs text-emerald-300" data-testid={`riba-form-copied-${ptype}`}>
+                                  Bağlantı kopyalandı.
+                                </p>
+                              )}
                             </div>
                           </div>
-                          {copied && (
-                            <p className="mt-2 text-xs text-emerald-300" data-testid={`riba-form-copied-${ptype}`}>
-                              Bağlantı kopyalandı.
-                            </p>
-                          )}
                         </div>
                       );
                     })}
