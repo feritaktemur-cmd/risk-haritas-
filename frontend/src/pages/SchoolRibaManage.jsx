@@ -135,11 +135,15 @@ export default function SchoolRibaManage() {
   const [closePreview, setClosePreview] = useState(null);
   const [closeLoading, setCloseLoading] = useState(false);
   const [closeError, setCloseError] = useState(null);
+  const [closing, setClosing] = useState(false);
+  const [closeSubmitError, setCloseSubmitError] = useState(null);
+  const [flash, setFlash] = useState(null);
 
   const openClosePreview = useCallback(async () => {
     setCloseOpen(true);
     setClosePreview(null);
     setCloseError(null);
+    setCloseSubmitError(null);
     setCloseLoading(true);
     try {
       const h = await authHeader();
@@ -155,6 +159,37 @@ export default function SchoolRibaManage() {
       setCloseLoading(false);
     }
   }, [navigate, applicationId]);
+
+  const submitClose = async () => {
+    if (closing) return;
+    setClosing(true);
+    setCloseSubmitError(null);
+    try {
+      const h = await authHeader();
+      if (!h) {
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      const res = await axios.post(`${API}/school/riba/applications/${applicationId}/close`, {}, { headers: h });
+      if (res.data?.status === "closed") {
+        setCloseOpen(false);
+        setFlash("RİBA uygulaması başarıyla kapatıldı. Yeni yanıt kabul edilmeyecektir.");
+        await load();
+      } else {
+        setCloseSubmitError("RİBA uygulaması kapatılırken bir sorun oluştu. Uygulama açık bırakıldı; lütfen tekrar deneyiniz.");
+      }
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 401) {
+        await supabase.auth.signOut();
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      setCloseSubmitError("RİBA uygulaması kapatılırken bir sorun oluştu. Uygulama açık bırakıldı; lütfen tekrar deneyiniz.");
+    } finally {
+      setClosing(false);
+    }
+  };
 
   const loadParticipation = useCallback(async () => {
     setPartLoading(true);
@@ -338,6 +373,14 @@ export default function SchoolRibaManage() {
           </div>
         ) : (
           <>
+            {flash && (
+              <div
+                data-testid="riba-manage-flash"
+                className="mb-5 flex items-start gap-2 rounded-xl bg-emerald-500/10 p-3 text-sm text-emerald-200 ring-1 ring-emerald-400/20"
+              >
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> <span>{flash}</span>
+              </div>
+            )}
             {/* Top summary */}
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6" data-testid="riba-manage-summary">
               <div className="flex flex-wrap items-center gap-3">
@@ -753,26 +796,36 @@ export default function SchoolRibaManage() {
                   )}
                 </div>
 
+                {/* Submit error */}
+                {closeSubmitError && (
+                  <div
+                    data-testid="riba-close-submit-error"
+                    className="mt-5 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20"
+                  >
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{closeSubmitError}</span>
+                  </div>
+                )}
+
                 {/* Actions */}
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                   <button
                     onClick={() => setCloseOpen(false)}
+                    disabled={closing}
                     data-testid="riba-close-continue"
-                    className="rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]"
+                    className="rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] disabled:opacity-40"
                   >
                     Yanıt Toplamaya Devam Et
                   </button>
                   <button
-                    disabled
+                    onClick={submitClose}
+                    disabled={closing || !closePreview?.can_close}
                     data-testid="riba-close-confirm"
-                    className="cursor-not-allowed rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 px-5 py-2 text-sm font-bold text-white opacity-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 px-5 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Mevcut Katılımla Kapat
+                    {closing ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {closing ? "Uygulama kapatılıyor…" : "Mevcut Katılımla Kapat"}
                   </button>
                 </div>
-                <p className="mt-2 text-right text-xs text-slate-500" data-testid="riba-close-note">
-                  Kapatma işlemi bir sonraki aşamada etkinleştirilecektir.
-                </p>
               </>
             )}
           </div>
