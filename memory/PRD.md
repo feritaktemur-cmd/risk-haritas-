@@ -114,6 +114,16 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
     Filtreler: Eğitim Yılı, İlçe (yalnız sorumlu), Kademe. 5 özet kartı + 8 alan + 36 madde (admin UX yeniden kullanıldı).
   * Genel Admin aggregate ve peer-comparison regresyonu korundu.
 
+- RİBA Frontend – Yeni Uygulama Formu (TAMAM, Haziran 2026):
+  * SchoolRibaNew.jsx placeholder → gerçek "Yeni RİBA Uygulaması" formu. Backend/schema değişmedi.
+  * Veri kaynağı: GET /api/school/students (academic_year adı + classes[{id,level,branch}]) — yeni endpoint yok.
+  * Form: aktif eğitim yılı (salt okunur), uygulama adı "{yıl} RİBA Uygulaması" (salt okunur), çoklu sınıf seçimi (kart/checkbox, ≥1 zorunlu), toplam öğretmen sayısı (int ≥0, zorunlu).
+  * Submit → POST /api/school/riba/applications body YALNIZCA {teacher_count, school_class_ids}. Çift gönderim engeli + "Oluşturuluyor…".
+  * Hatalar: 409 "zaten" → "Bu eğitim öğretim yılı için zaten bir RİBA uygulaması bulunuyor."; 409 aktif yıl yok → RAM mesajı; diğer → genel mesaj (ham detail gösterilmez).
+  * Başarı → /school/riba'ya dön + flash "RİBA uygulaması taslak olarak oluşturuldu." (SchoolRiba.jsx flash state eklendi).
+  * Test: syntax/build kontrolü (webpack compiled successfully). Gerçek DB testi kullanıcı Preview'da yapacak.
+  * Sonraki: application listeleme, activate/başlat, formlar/QR, katılım, sonuçlar.
+
 ## Backlog / Sonraki olası görevler
 - RLS policy tasarımı (tüm tablolarda RLS ON, policy=0)
 - Submission status workflow (under_review / revision_requested / approved) UI+backend

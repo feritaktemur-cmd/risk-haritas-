@@ -1,12 +1,21 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Loader2, ClipboardList, ArrowLeft, Plus, Inbox } from "lucide-react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { Loader2, ClipboardList, ArrowLeft, Plus, Inbox, CheckCircle2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
 export default function SchoolRiba() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [checking, setChecking] = useState(true);
+  const [flash, setFlash] = useState(location.state?.flash || null);
+
+  useEffect(() => {
+    if (location.state?.flash) {
+      // Clear the navigation state so the message doesn't reappear on refresh/back.
+      window.history.replaceState({}, "");
+    }
+  }, [location.state]);
 
   useEffect(() => {
     let active = true;
@@ -58,6 +67,15 @@ export default function SchoolRiba() {
         <p className="mt-2 max-w-2xl text-sm text-slate-400">
           RİBA uygulamalarınızı oluşturabilir, katılım durumunu takip edebilir ve sonuçları görüntüleyebilirsiniz.
         </p>
+
+        {flash && (
+          <div
+            data-testid="riba-flash"
+            className="mt-6 flex items-start gap-2 rounded-xl bg-emerald-500/10 p-3 text-sm text-emerald-200 ring-1 ring-emerald-400/20"
+          >
+            <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> <span>{flash}</span>
+          </div>
+        )}
 
         {/* Empty state */}
         <div
