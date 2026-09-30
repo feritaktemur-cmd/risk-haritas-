@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, LogOut, MapPinned, BarChart3, GraduationCap, ArrowUpRight } from "lucide-react";
+import { Loader2, LogOut, MapPinned, BarChart3, GraduationCap, ArrowUpRight, ClipboardList } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
@@ -87,6 +87,27 @@ export default function Modules({ variant = "school" }) {
               Aç <ArrowUpRight size={15} className="transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
             </span>
           </button>
+
+          {/* RİBA (school only) */}
+          {variant === "school" && (
+            <button
+              onClick={() => navigate("/school/riba")}
+              data-testid="module-riba"
+              className="group flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-left transition hover:border-emerald-400/40 hover:bg-white/[0.06]"
+            >
+              <span className="grid h-12 w-12 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+                <ClipboardList size={24} />
+              </span>
+              <span className="mt-4 block text-base font-bold text-white">RİBA</span>
+              <span className="mt-1 block text-sm font-semibold text-emerald-300/80">Rehberlik İhtiyacı Belirleme Anketi</span>
+              <span className="mt-2 block text-sm text-slate-400">
+                Okulunuzun rehberlik ihtiyaçlarını belirlemek için RİBA uygulamalarını oluşturun ve yönetin.
+              </span>
+              <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-emerald-300">
+                Aç <ArrowUpRight size={15} className="transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+              </span>
+            </button>
+          )}
 
           {/* LGS Tercih Sistemi */}
           <a
