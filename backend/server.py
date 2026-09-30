@@ -20,6 +20,7 @@ from students_excel import analyze_student_rows
 from admin_accounts import generate_username, generate_temp_password, synth_email_for
 from riba_link_token import generate_link_token, hash_link_token, RibaLinkTokenError
 import re as _re
+import math as _math
 
 
 def _valid_school_password(pw: str):
@@ -2001,6 +2002,154 @@ async def school_riba_get_access_links(application_id: str, request: Request):
         "application_id": application_id,
         "access_tokens": access_tokens,
     }
+
+
+@api.get("/school/riba/applications/{application_id}/participation")
+async def school_riba_participation(application_id: str, request: Request):
+    """Read-only participation tracking for an ACTIVE RİBA application.
+
+    Denominators come from AUTHORITATIVE existing data only:
+      * student / parent per class -> real enrolled-student count of that class
+        for the application's academic year (student_class_enrollments).
+      * teacher -> riba_applications.teacher_count (school-wide).
+    Response counts are raw riba_responses counts (no identity inference; the
+    student model has no duplicate protection, so counts may exceed the
+    denominator and percentages are NOT capped). Bound participant types come
+    from riba_application_forms -> riba_forms.participant_type; types that are
+    not bound get NO fabricated data. This endpoint changes NOTHING and does
+    NOT compute any RİBA/ASP statistics.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    # Ownership check (never trust the path for scope; safe 404 pattern).
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,status,teacher_count,academic_year_id")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+
+    academic_year_id = app_row["academic_year_id"]
+    teacher_count = app_row["teacher_count"]
+
+    # Authoritative bound participant types (pinned at activation).
+    bound_forms = (
+        client.table("riba_application_forms")
+        .select("form_id")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    bound_form_ids = [b["form_id"] for b in bound_forms]
+    bound_types = set()
+    if bound_form_ids:
+        form_rows = (
+            client.table("riba_forms")
+            .select("participant_type")
+            .in_("id", bound_form_ids)
+            .execute()
+            .data
+        )
+        bound_types = {f["participant_type"] for f in form_rows}
+
+    # Application classes (with readable label).
+    ac_rows = (
+        client.table("riba_application_classes")
+        .select("school_class:school_classes(id,level,branch,school_id)")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    app_classes = []
+    for r in ac_rows:
+        sc = r.get("school_class") or {}
+        if sc.get("id") is None or sc.get("school_id") != school_id:
+            continue
+        app_classes.append({"id": sc["id"], "level": sc["level"], "branch": sc["branch"]})
+    app_classes.sort(key=lambda c: (c["level"], c["branch"]))
+    class_ids = [c["id"] for c in app_classes]
+
+    # Real enrolled-student count per class for the application's academic year.
+    student_count_by_class = {cid: 0 for cid in class_ids}
+    if class_ids:
+        enr = (
+            client.table("student_class_enrollments")
+            .select("school_class_id")
+            .eq("school_id", school_id)
+            .eq("academic_year_id", academic_year_id)
+            .in_("school_class_id", class_ids)
+            .execute()
+            .data
+        )
+        for e in enr:
+            cid = e.get("school_class_id")
+            if cid in student_count_by_class:
+                student_count_by_class[cid] += 1
+
+    # Raw response counts by (participant_type, school_class_id).
+    resp = (
+        client.table("riba_responses")
+        .select("participant_type,school_class_id")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    class_resp = {}  # (ptype, class_id) -> count
+    teacher_resp = 0
+    for r in resp:
+        ptype = r.get("participant_type")
+        if ptype == "teacher":
+            teacher_resp += 1
+            continue
+        cid = r.get("school_class_id")
+        class_resp[(ptype, cid)] = class_resp.get((ptype, cid), 0) + 1
+
+    def _metrics(response_count, denominator):
+        percentage = None if denominator == 0 else (response_count / denominator * 100)
+        minimum_required = _math.ceil(denominator * 0.30) if denominator > 0 else 0
+        meets = response_count >= minimum_required if denominator > 0 else False
+        return {
+            "response_count": response_count,
+            "denominator": denominator,
+            "percentage": percentage,
+            "minimum_required": minimum_required,
+            "meets_30_percent": meets,
+        }
+
+    classes = []
+    for c in app_classes:
+        cid = c["id"]
+        sc_count = student_count_by_class.get(cid, 0)
+        entry = {
+            "school_class_id": cid,
+            "class_name": f"{c['level']}/{c['branch']}",
+            "student_count": sc_count,
+        }
+        # Only bound participant types get an object; never fabricate.
+        if "student" in bound_types:
+            entry["student"] = _metrics(class_resp.get(("student", cid), 0), sc_count)
+        if "parent" in bound_types:
+            entry["parent"] = _metrics(class_resp.get(("parent", cid), 0), sc_count)
+        classes.append(entry)
+
+    result = {
+        "application_id": application_id,
+        "status": app_row["status"],
+        "classes": classes,
+    }
+    if "teacher" in bound_types:
+        result["teacher"] = _metrics(teacher_resp, teacher_count)
+
+    return result
+
 
 
 @api.get("/riba/respond/{token}")
