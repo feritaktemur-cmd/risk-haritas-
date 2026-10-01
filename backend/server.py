@@ -2795,10 +2795,24 @@ async def school_riba_results(application_id: str, request: Request):
         ],
     }
 
+    # RAM submission state (read-only; minimal).
+    sub = (
+        client.table("riba_submissions")
+        .select("id,submitted_at")
+        .eq("application_id", application_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    ram_submission = (
+        {"submission_id": sub[0]["id"], "submitted_at": sub[0]["submitted_at"]} if sub else None
+    )
+
     return {
         "application": application,
         "class_results": class_results,
         "school_results": school_results,
+        "ram_submission": ram_submission,
     }
 
 
@@ -2903,6 +2917,184 @@ async def school_riba_finalize(application_id: str, request: Request):
         "finalized_at": finalized_at,
         "special_target_1_id": st1,
         "special_target_2_id": st2,
+    }
+
+
+@api.post("/school/riba/applications/{application_id}/submit-to-ram")
+async def school_riba_submit_to_ram(application_id: str, request: Request):
+    """Create an IMMUTABLE RAM submission snapshot of a finalized application.
+
+    Copies the final school-level results + the two chosen special targets into
+    riba_submissions / riba_submission_target_results exactly as they stand.
+    Recomputes NOTHING (no riba_calc), writes NOTHING back to source RİBA tables,
+    and never touches access links. Single submission per application (UNIQUE +
+    pre-check). Non-transactional stack -> compensating cleanup on any failure.
+    """
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+
+    rows = (
+        client.table("riba_applications")
+        .select("id,school_id,academic_year_id,status,finalized_at,special_target_1_id,special_target_2_id")
+        .eq("id", application_id)
+        .eq("school_id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_row = rows[0] if rows else None
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="RİBA uygulaması bulunamadı.")
+
+    # Only a properly finalized application may be submitted.
+    st1 = app_row.get("special_target_1_id")
+    st2 = app_row.get("special_target_2_id")
+    if (
+        app_row["status"] != "finalized"
+        or not app_row.get("finalized_at")
+        or not st1 or not st2 or st1 == st2
+    ):
+        raise HTTPException(status_code=409, detail="Yalnızca sonuçlandırılmış uygulamalar RAM'a gönderilebilir.")
+
+    # Single submission guard (UNIQUE(application_id) is the second layer).
+    existing = (
+        client.table("riba_submissions").select("id").eq("application_id", application_id).limit(1).execute().data
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Bu RİBA uygulaması zaten RAM'a gönderilmiş.")
+
+    # Authoritative education level + institutional metadata (submission-time snapshot).
+    srow = (
+        client.table("schools")
+        .select("name,education_level_id,district:districts(name),education_level:education_levels(name)")
+        .eq("id", school_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not srow:
+        raise HTTPException(status_code=500, detail="RAM gönderimi hazırlanırken bir sorun oluştu. Lütfen tekrar deneyiniz.")
+    education_level_id = srow[0]["education_level_id"]
+    school_name = srow[0]["name"]
+    district_name = (srow[0].get("district") or {}).get("name")
+    education_level_name = (srow[0].get("education_level") or {}).get("name")
+    if not district_name or not education_level_name:
+        raise HTTPException(status_code=500, detail="RAM gönderimi için kurum bilgileri eksik.")
+
+    ay = client.table("academic_years").select("name").eq("id", app_row["academic_year_id"]).limit(1).execute().data
+    academic_year_name = ay[0]["name"] if ay else None
+    if not academic_year_name:
+        raise HTTPException(status_code=500, detail="RAM gönderimi için eğitim öğretim yılı bilgisi eksik.")
+
+    # Education-level target universe (authoritative identity = target_id).
+    trows = (
+        client.table("riba_targets").select("id,meb_code,name").eq("education_level_id", education_level_id).execute().data
+    )
+    target_meta = {t["id"]: {"meb_code": t["meb_code"], "name": t["name"]} for t in trows}
+    level_target_ids = set(target_meta.keys())
+    if not level_target_ids:
+        raise HTTPException(status_code=500, detail="RAM gönderimi için hedef tanımları bulunamadı.")
+
+    # Final school snapshot for this application.
+    srs = (
+        client.table("riba_school_target_results")
+        .select("target_id,class_count,average_asp,rank")
+        .eq("application_id", application_id)
+        .execute()
+        .data
+    )
+    snap_target_ids = {r["target_id"] for r in srs}
+    # Snapshot integrity: snapshot target set must equal the level target set exactly.
+    if snap_target_ids != level_target_ids or len(srs) != len(level_target_ids):
+        logger.error("riba submit-to-ram: snapshot/target set mismatch for app %s", application_id)
+        raise HTTPException(status_code=500, detail="RİBA okul sonuç verileri tutarsız. RAM'a gönderim yapılamadı.")
+
+    # Validate both special targets: belong to level AND to the final snapshot set.
+    for stid in (st1, st2):
+        if stid not in level_target_ids or stid not in snap_target_ids:
+            raise HTTPException(status_code=409, detail="Seçilen özel hedefler uygulamanın sonuç kümesiyle uyumsuz. RAM'a gönderim yapılamadı.")
+
+    # ---- Create header, then child rows; compensating cleanup on failure. ----
+    header_payload = {
+        "application_id": application_id,
+        "school_id": school_id,
+        "academic_year_id": app_row["academic_year_id"],
+        "education_level_id": education_level_id,
+        "school_name": school_name,
+        "district_name": district_name,
+        "academic_year_name": academic_year_name,
+        "education_level_name": education_level_name,
+        "special_target_1_id": st1,
+        "special_target_1_code": target_meta[st1]["meb_code"],
+        "special_target_1_name": target_meta[st1]["name"],
+        "special_target_2_id": st2,
+        "special_target_2_code": target_meta[st2]["meb_code"],
+        "special_target_2_name": target_meta[st2]["name"],
+    }
+    try:
+        inserted = client.table("riba_submissions").insert(header_payload).execute().data
+    except Exception:  # noqa: BLE001 - handles UNIQUE(application_id) race too
+        logger.exception("riba submit-to-ram: header insert failed for app %s", application_id)
+        # A concurrent duplicate would have created the row; surface a clean 409.
+        dup = client.table("riba_submissions").select("id").eq("application_id", application_id).limit(1).execute().data
+        if dup:
+            raise HTTPException(status_code=409, detail="Bu RİBA uygulaması zaten RAM'a gönderilmiş.")
+        raise HTTPException(status_code=500, detail="RAM gönderimi oluşturulurken bir sorun oluştu. Lütfen tekrar deneyiniz.")
+    submission_id = inserted[0]["id"]
+
+    def _cleanup():
+        try:
+            client.table("riba_submission_target_results").delete().eq("submission_id", submission_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba submit-to-ram: child cleanup failed for submission %s", submission_id)
+        try:
+            client.table("riba_submissions").delete().eq("id", submission_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.exception("riba submit-to-ram: header cleanup failed for submission %s", submission_id)
+
+    try:
+        child_payload = [
+            {
+                "submission_id": submission_id,
+                "target_id": r["target_id"],
+                "meb_code": target_meta[r["target_id"]]["meb_code"],
+                "target_name": target_meta[r["target_id"]]["name"],
+                "class_count": r["class_count"],
+                "average_asp": r["average_asp"],
+                "rank": r["rank"],
+            }
+            for r in srs
+        ]
+        for i in range(0, len(child_payload), 500):
+            client.table("riba_submission_target_results").insert(child_payload[i:i + 500]).execute()
+
+        # Read-back integrity check.
+        back = (
+            client.table("riba_submission_target_results")
+            .select("target_id")
+            .eq("submission_id", submission_id)
+            .execute()
+            .data
+        )
+        back_ids = {r["target_id"] for r in back}
+        if len(back) != len(level_target_ids) or back_ids != level_target_ids or back_ids != snap_target_ids:
+            logger.error("riba submit-to-ram: read-back mismatch for submission %s", submission_id)
+            _cleanup()
+            raise HTTPException(status_code=500, detail="RAM gönderimi doğrulanamadı. Lütfen tekrar deneyiniz.")
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception("riba submit-to-ram: child write failed for submission %s", submission_id)
+        _cleanup()
+        raise HTTPException(status_code=500, detail="RAM gönderimi oluşturulurken bir sorun oluştu. Lütfen tekrar deneyiniz.")
+
+    submitted_at = inserted[0].get("submitted_at")
+    return {
+        "submission_id": submission_id,
+        "application_id": application_id,
+        "submitted_at": submitted_at,
+        "target_count": len(srs),
     }
 
 
