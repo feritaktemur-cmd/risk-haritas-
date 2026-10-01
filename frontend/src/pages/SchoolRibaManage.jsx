@@ -87,7 +87,7 @@ function HowCalculated({ open, setOpen }) {
   );
 }
 
-function ResultsPanel({ results, tab, setTab, selectedClassId, setSelectedClassId, howOpen, setHowOpen, st1, st2, setSt1, setSt2, onFinalizeClick }) {
+function ResultsPanel({ results, tab, setTab, selectedClassId, setSelectedClassId, howOpen, setHowOpen, st1, st2, setSt1, setSt2, onFinalizeClick, ramSubmission, onRamSubmitClick }) {
   const app = results.application || {};
   const classResults = results.class_results || [];
   const schoolResults = results.school_results || [];
@@ -304,6 +304,37 @@ function ResultsPanel({ results, tab, setTab, selectedClassId, setSelectedClassI
         </div>
       )}
 
+      {/* RAM'a Gönder (finalized only) */}
+      {isFinalized && (
+        <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-5" data-testid="riba-ram-section">
+          <h4 className="text-sm font-bold text-white">RAM'a Gönder</h4>
+          {ramSubmission ? (
+            <div className="mt-2 flex items-center gap-2 text-sm text-emerald-300" data-testid="riba-ram-submitted">
+              <CheckCircle2 size={16} className="shrink-0" />
+              <span>
+                RAM'a gönderildi
+                {ramSubmission.submitted_at && (
+                  <span className="text-slate-400"> · {formatDate(ramSubmission.submitted_at)}</span>
+                )}
+              </span>
+            </div>
+          ) : (
+            <>
+              <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                Okul düzeyi RİBA sonuçlarını ve belirlediğiniz iki özel hedefi RAM'a değişmez bir kayıt olarak gönderebilirsiniz.
+              </p>
+              <button
+                onClick={onRamSubmitClick}
+                data-testid="riba-ram-submit-btn"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-emerald-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:opacity-90"
+              >
+                RAM'a Gönder
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       <HowCalculated open={howOpen} setOpen={setHowOpen} />
     </div>
   );
@@ -413,6 +444,43 @@ export default function SchoolRibaManage() {
   const [finalizeConfirmOpen, setFinalizeConfirmOpen] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState(null);
+  const [ramConfirmOpen, setRamConfirmOpen] = useState(false);
+  const [ramSubmitting, setRamSubmitting] = useState(false);
+  const [ramError, setRamError] = useState(null);
+
+  const submitToRam = async () => {
+    if (ramSubmitting) return;
+    setRamSubmitting(true);
+    setRamError(null);
+    try {
+      const h = await authHeader();
+      if (!h) {
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      const res = await axios.post(
+        `${API}/school/riba/applications/${applicationId}/submit-to-ram`,
+        {},
+        { headers: h }
+      );
+      if (res.data?.submission_id) {
+        setRamConfirmOpen(false);
+        setFlash("RİBA sonuçları RAM'a başarıyla gönderildi.");
+        await loadResults();
+      } else {
+        setRamError("RAM'a gönderim sırasında bir sorun oluştu. Lütfen tekrar deneyiniz.");
+      }
+    } catch (err) {
+      if (err.response?.status === 401) {
+        await supabase.auth.signOut();
+        navigate("/school/login", { replace: true });
+        return;
+      }
+      setRamError("RAM'a gönderim sırasında bir sorun oluştu. Lütfen tekrar deneyiniz.");
+    } finally {
+      setRamSubmitting(false);
+    }
+  };
 
   const submitFinalize = async () => {
     if (finalizing) return;
@@ -840,6 +908,8 @@ export default function SchoolRibaManage() {
                     setSt1={setSt1}
                     setSt2={setSt2}
                     onFinalizeClick={() => { setFinalizeError(null); setFinalizeConfirmOpen(true); }}
+                    ramSubmission={results.ram_submission}
+                    onRamSubmitClick={() => { setRamError(null); setRamConfirmOpen(true); }}
                   />
                 )}
               </div>
@@ -1274,6 +1344,56 @@ export default function SchoolRibaManage() {
         );
       })()}
 
+
+      {/* RAM submit confirmation modal */}
+      {ramConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+          data-testid="riba-ram-modal"
+          onClick={() => { if (!ramSubmitting) setRamConfirmOpen(false); }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0f172a] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-lg font-extrabold text-white">RİBA Sonuçlarını RAM'a Gönder</h3>
+              <button
+                onClick={() => setRamConfirmOpen(false)}
+                disabled={ramSubmitting}
+                data-testid="riba-ram-modal-close"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="mt-4 text-sm text-slate-400">
+              Bu işlem, sonuçlandırılmış RİBA uygulamasının okul düzeyi sonuçlarını ve belirlediğiniz iki özel hedefi RAM'a değişmez bir kayıt olarak gönderecektir. Gönderilen kayıt sonradan değiştirilemez. Devam etmek istiyor musunuz?
+            </p>
+            {ramError && (
+              <div data-testid="riba-ram-error" className="mt-4 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{ramError}</span>
+              </div>
+            )}
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setRamConfirmOpen(false)}
+                disabled={ramSubmitting}
+                data-testid="riba-ram-cancel"
+                className="rounded-xl bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1] disabled:opacity-40"
+              >
+                Vazgeç
+              </button>
+              <button
+                onClick={submitToRam}
+                disabled={ramSubmitting}
+                data-testid="riba-ram-confirm"
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-emerald-500 px-5 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {ramSubmitting ? <Loader2 size={14} className="animate-spin" /> : null}
+                {ramSubmitting ? "Gönderiliyor…" : "RAM'a Gönder"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <CorporateFooter className="border-t border-white/10" />
     </div>
