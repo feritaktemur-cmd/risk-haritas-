@@ -5273,6 +5273,96 @@ async def ram_riba_submission_detail(request: Request, submission_id: str):
     }
 
 
+@api.get("/ram/riba/statistics/special-targets")
+async def ram_riba_special_target_stats(
+    request: Request,
+    academic_year_id: str,
+    education_level_id: int,
+    district_id: int = None,
+):
+    """Read-only special-target selection frequency within the RAM's scope.
+
+    Source: riba_submissions snapshot fields only. Latest submission per
+    (school, year, level) wins (submitted_at DESC, id DESC). Competition rank (1,1,3).
+    """
+    client, acc = _require_ram_riba_access(request)
+    district_ids = _ram_responsible_district_ids(client, acc["ram_id"])
+    if district_id is not None:
+        if district_id not in district_ids:
+            raise HTTPException(status_code=403, detail="Bu ilçe için yetkiniz bulunmuyor.")
+        district_ids = [district_id]
+    result = {
+        "academic_year_id": academic_year_id,
+        "education_level_id": education_level_id,
+        "district_id": district_id,
+        "participating_school_count": 0,
+        "total_selections": 0,
+        "items": [],
+    }
+    if not district_ids:
+        return result
+    schools = _fetch_all(
+        lambda a, b: client.table("schools").select("id,district_id").in_("district_id", district_ids).range(a, b)
+    )
+    scoped = {s["id"] for s in schools if s.get("district_id") in district_ids}
+    if not scoped:
+        return result
+
+    try:
+        subs = _fetch_all(
+            lambda a, b: client.table("riba_submissions")
+            .select("id,school_id,special_target_1_id,special_target_1_code,special_target_1_name,"
+                    "special_target_2_id,special_target_2_code,special_target_2_name,submitted_at")
+            .in_("school_id", list(scoped))
+            .eq("academic_year_id", academic_year_id)
+            .eq("education_level_id", education_level_id)
+            .order("submitted_at", desc=True)
+            .order("id", desc=True)
+            .range(a, b)
+        )
+    except Exception:  # noqa: BLE001 - e.g. malformed academic_year_id
+        logger.exception("ram riba special-target stats failed")
+        raise HTTPException(status_code=400, detail="Geçersiz filtre.")
+
+    latest = {}
+    for s in subs:
+        if s.get("school_id") in scoped and s["school_id"] not in latest:
+            latest[s["school_id"]] = s
+
+    counts, meta = {}, {}
+    for s in latest.values():
+        picked = {}
+        for n in ("1", "2"):
+            tid = s.get(f"special_target_{n}_id")
+            if tid and tid not in picked:
+                picked[tid] = (s.get(f"special_target_{n}_code"), s.get(f"special_target_{n}_name"))
+        for tid, (code, name) in picked.items():
+            counts[tid] = counts.get(tid, 0) + 1
+            meta.setdefault(tid, (code, name))
+
+    participating = len(latest)
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], meta[kv[0]][0] or ""))
+    items, prev, rank = [], None, 0
+    for i, (tid, cnt) in enumerate(ordered, start=1):
+        if cnt != prev:
+            rank, prev = i, cnt
+        items.append({
+            "target_id": tid,
+            "meb_code": meta[tid][0],
+            "target_name": meta[tid][1],
+            "school_count": cnt,
+            "percentage": round(cnt / participating * 100, 1) if participating else 0.0,
+            "rank": rank,
+        })
+    result.update({
+        "participating_school_count": participating,
+        "total_selections": sum(counts.values()),
+        "items": items,
+    })
+    return result
+
+
+
 
 
 @api.get("/admin/academic-years")

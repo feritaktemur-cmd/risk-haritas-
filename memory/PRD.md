@@ -152,3 +152,8 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - /ram/riba/submissions/:id (RamRibaSubmissionDetail.jsx): metadata, 2 special targets, all targets; NULL -> "Hesaplanamadı".
 - lib/ramRibaApi.js: shared session/axios helper (403 redirect only for password_change_required).
 - RamModules card added. Data note: existing submission 9a1c9a2f… has all 27 targets NULL ASP/rank (source data).
+
+## 2026-06 — RAM RİBA özel hedef seçilme sıklığı (backend)
+- GET /api/ram/riba/statistics/special-targets?academic_year_id&education_level_id[&district_id]
+- Latest submission per school (submitted_at DESC, id DESC), group by target_id, competition rank, 1-decimal %; unauthorized district -> 403.
+- Next: frontend for this stats endpoint; İlçe Ortalama ASP Analizi (not started).
