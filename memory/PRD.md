@@ -157,3 +157,8 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - GET /api/ram/riba/statistics/special-targets?academic_year_id&education_level_id[&district_id]
 - Latest submission per school (submitted_at DESC, id DESC), group by target_id, competition rank, 1-decimal %; unauthorized district -> 403.
 - Next: frontend for this stats endpoint; İlçe Ortalama ASP Analizi (not started).
+
+## 2026-06 — RAM RİBA sekme yapısı + Özel Hedef İstatistikleri (frontend)
+- components/RamRibaTabs.jsx: Gelen Gönderimler (/ram/riba), Özel Hedef İstatistikleri (/ram/riba/special-targets), İlçe Ortalama ASP Analizi (pasif, Yakında).
+- pages/RamRibaSpecialTargets.jsx: year (auto active) + level required, optional district; summary cards, rank table, % bar.
+- RamRiba.jsx only got tabs + title "RİBA"; RamModules card renamed "RİBA". Detail page untouched.

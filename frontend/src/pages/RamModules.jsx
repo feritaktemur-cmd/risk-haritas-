@@ -108,9 +108,9 @@ export default function RamModules() {
             <span className="grid h-12 w-12 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
               <ClipboardCheck size={24} />
             </span>
-            <span className="mt-4 block text-base font-bold text-white">RİBA – Gelen Gönderimler</span>
+            <span className="mt-4 block text-base font-bold text-white">RİBA</span>
             <span className="mt-2 block text-sm text-slate-400">
-              Sorumlu olduğunuz ilçelerdeki okulların RAM'a gönderdiği RİBA okul sonuçlarını salt-okunur olarak görüntüleyin.
+              Sorumlu olduğunuz ilçelerdeki okulların RAM'a gönderdiği RİBA sonuçlarını ve özel hedef istatistiklerini salt-okunur olarak görüntüleyin.
             </span>
           </button>
         </div>

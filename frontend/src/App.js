@@ -20,6 +20,7 @@ import RamRiskMap from "./pages/RamRiskMap";
 import RamSubmissionDetail from "./pages/RamSubmissionDetail";
 import RamRiba from "./pages/RamRiba";
 import RamRibaSubmissionDetail from "./pages/RamRibaSubmissionDetail";
+import RamRibaSpecialTargets from "./pages/RamRibaSpecialTargets";
 import RamAggregateRiskMap from "./pages/RamAggregateRiskMap";
 import SchoolLogin from "./pages/SchoolLogin";
 import Modules from "./pages/Modules";
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="/ram/risk-map/aggregate" element={<RamAggregateRiskMap />} />
         <Route path="/ram/risk-map/submissions/:submissionId" element={<RamSubmissionDetail />} />
         <Route path="/ram/riba" element={<RamRiba />} />
+        <Route path="/ram/riba/special-targets" element={<RamRibaSpecialTargets />} />
         <Route path="/ram/riba/submissions/:submissionId" element={<RamRibaSubmissionDetail />} />
         <Route path="/admin/risk-map/submissions/:submissionId" element={<AdminSubmissionDetail />} />
         <Route path="/school/login" element={<SchoolLogin />} />

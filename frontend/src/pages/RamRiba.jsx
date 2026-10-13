@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2, ArrowLeft, AlertTriangle, Search, ClipboardCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { ramGet, formatDate, targetLabel } from "../lib/ramRibaApi";
+import { RamRibaTabs } from "../components/RamRibaTabs";
 
 const PAGE_SIZE = 25;
 const selectCls = "rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-400/60";
@@ -67,7 +68,7 @@ export default function RamRiba() {
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-[0.18em] text-emerald-300/80">PDRPUSULA</p>
-              <h1 className="text-lg font-extrabold text-white" data-testid="ramriba-title">RİBA – Gelen Gönderimler</h1>
+              <h1 className="text-lg font-extrabold text-white" data-testid="ramriba-title">RİBA</h1>
             </div>
           </div>
           <button onClick={() => navigate("/ram/modules")} data-testid="ramriba-back-btn" className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]">
@@ -77,6 +78,7 @@ export default function RamRiba() {
       </header>
 
       <main className="mx-auto max-w-7xl px-6 py-8">
+        <RamRibaTabs />
         <h2 className="mb-1 text-base font-bold text-white">RİBA Gönderimleri</h2>
         <p className="mb-6 text-xs text-slate-400">Sorumlu olduğunuz ilçelerdeki okulların RAM'a gönderdiği RİBA okul sonuçları (gönderim anındaki değişmez kayıt).</p>
 
