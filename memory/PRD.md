@@ -140,3 +140,9 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Submission status workflow (under_review / revision_requested / approved) UI+backend
 - Karşılaştırmalı analiz (kademe/okul türü/resmî-özel/ilçeler arası)
 - Güvenli Supabase key rotation (kullanıcı açıkça isterse)
+
+## 2026-06 — RAM RİBA read-only backend
+- GET /api/ram/riba/submissions (RAM-scoped list; filters academic_year_id, education_level_id, district_id, q; page/page_size<=100)
+- GET /api/ram/riba/submissions/{id} (metadata + all targets; out-of-scope = 404)
+- Extra rams.is_active check (403) only for these two endpoints via _require_ram_riba_access.
+- Next: RAM RİBA frontend list/detail, İlçe aggregations, PDF export, "Nasıl hesaplandı?" panel.

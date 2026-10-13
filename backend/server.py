@@ -5120,6 +5120,160 @@ async def ram_risk_map_submission_detail(request: Request, submission_id: str):
     return _build_submission_detail(client, sub)
 
 
+_RAM_RIBA_SUB_SELECT = (
+    "id,application_id,school_id,academic_year_id,education_level_id,"
+    "school_name,district_name,academic_year_name,education_level_name,"
+    "special_target_1_id,special_target_1_code,special_target_1_name,"
+    "special_target_2_id,special_target_2_code,special_target_2_name,submitted_at"
+)
+
+
+def _require_ram_riba_access(request: Request):
+    """_require_ram_ready + parent rams.is_active check (RAM RİBA endpoints only)."""
+    _uid, acc = _require_ram_ready(request)
+    client = get_service_client()
+    rams = client.table("rams").select("id,is_active").eq("id", acc["ram_id"]).limit(1).execute().data
+    if not rams or not rams[0].get("is_active"):
+        raise HTTPException(status_code=403, detail="Bu hesapla giriş yapılamıyor. Lütfen Genel Admin ile iletişime geçin.")
+    return client, acc
+
+
+def _ram_riba_sub_meta(row, district_id):
+    return {
+        "submission_id": row["id"],
+        "application_id": row.get("application_id"),
+        "school_id": row.get("school_id"),
+        "school_name": row.get("school_name"),
+        "district_id": district_id,
+        "district_name": row.get("district_name"),
+        "academic_year_id": row.get("academic_year_id"),
+        "academic_year_name": row.get("academic_year_name"),
+        "education_level_id": row.get("education_level_id"),
+        "education_level_name": row.get("education_level_name"),
+        "special_target_1": {
+            "id": row.get("special_target_1_id"),
+            "meb_code": row.get("special_target_1_code"),
+            "name": row.get("special_target_1_name"),
+        },
+        "special_target_2": {
+            "id": row.get("special_target_2_id"),
+            "meb_code": row.get("special_target_2_code"),
+            "name": row.get("special_target_2_name"),
+        },
+        "submitted_at": row.get("submitted_at"),
+    }
+
+
+@api.get("/ram/riba/submissions")
+async def ram_riba_submissions(
+    request: Request,
+    academic_year_id: str = None,
+    education_level_id: str = None,
+    district_id: int = None,
+    q: str = None,
+    page: int = 1,
+    page_size: int = 25,
+):
+    """Read-only, RAM-scoped list of RİBA RAM submissions (snapshot metadata).
+
+    Scope: token -> ram_id -> ram_districts -> schools -> riba_submissions.school_id.
+    Filters only narrow within scope; out-of-scope district_id yields 0 rows.
+    """
+    client, acc = _require_ram_riba_access(request)
+    page = max(1, page)
+    page_size = max(1, min(100, page_size))
+    empty = {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+    district_ids = _ram_responsible_district_ids(client, acc["ram_id"])
+    if not district_ids:
+        return empty
+    if district_id is not None:
+        if district_id not in district_ids:
+            return empty
+        district_ids = [district_id]
+    schools = _fetch_all(
+        lambda a, b: client.table("schools").select("id,district_id").in_("district_id", district_ids).range(a, b)
+    )
+    school_district = {s["id"]: s["district_id"] for s in schools}
+    if not school_district:
+        return empty
+
+    start = (page - 1) * page_size
+    qb = (
+        client.table("riba_submissions")
+        .select(_RAM_RIBA_SUB_SELECT, count="exact")
+        .in_("school_id", list(school_district.keys()))
+    )
+    if academic_year_id:
+        qb = qb.eq("academic_year_id", academic_year_id)
+    if education_level_id:
+        qb = qb.eq("education_level_id", education_level_id)
+    term = (q or "").strip().replace("%", "").replace("_", "").replace("\\", "")
+    if term:
+        qb = qb.ilike("school_name", f"%{term}%")
+    try:
+        resp = qb.order("submitted_at", desc=True).order("id").range(start, start + page_size - 1).execute()
+    except Exception:  # noqa: BLE001 - e.g. malformed filter ids
+        logger.exception("ram riba submissions list failed")
+        raise HTTPException(status_code=400, detail="Geçersiz filtre.")
+
+    items = [
+        _ram_riba_sub_meta(r, school_district.get(r.get("school_id")))
+        for r in (resp.data or [])
+        if r.get("school_id") in school_district
+    ]
+    return {"items": items, "total": resp.count or 0, "page": page, "page_size": page_size}
+
+
+@api.get("/ram/riba/submissions/{submission_id}")
+async def ram_riba_submission_detail(request: Request, submission_id: str):
+    """Read-only detail of ONE RİBA RAM submission, ONLY if in the RAM's scope.
+
+    Not found and out-of-scope both return the same 404. Target values are
+    returned exactly as stored (NULL preserved); no calculation is performed.
+    """
+    client, acc = _require_ram_riba_access(request)
+    not_found = HTTPException(status_code=404, detail="Gönderim kaydı bulunamadı.")
+
+    responsible = set(_ram_responsible_district_ids(client, acc["ram_id"]))
+    if not responsible:
+        raise not_found
+    try:
+        subs = client.table("riba_submissions").select(_RAM_RIBA_SUB_SELECT).eq("id", submission_id).limit(1).execute().data
+    except Exception:  # noqa: BLE001 - malformed id
+        raise not_found
+    sub = subs[0] if subs else None
+    if sub is None:
+        raise not_found
+    srows = client.table("schools").select("district_id").eq("id", sub["school_id"]).limit(1).execute().data
+    sub_district_id = srows[0].get("district_id") if srows else None
+    if sub_district_id not in responsible:
+        raise not_found
+
+    targets = _fetch_all(
+        lambda a, b: client.table("riba_submission_target_results")
+        .select("target_id,meb_code,target_name,class_count,average_asp,rank")
+        .eq("submission_id", submission_id)
+        .order("meb_code")
+        .range(a, b)
+    )
+    return {
+        **_ram_riba_sub_meta(sub, sub_district_id),
+        "targets": [
+            {
+                "target_id": t.get("target_id"),
+                "meb_code": t.get("meb_code"),
+                "target_name": t.get("target_name"),
+                "class_count": t.get("class_count"),
+                "average_asp": t.get("average_asp"),
+                "rank": t.get("rank"),
+            }
+            for t in targets
+        ],
+    }
+
+
+
 
 @api.get("/admin/academic-years")
 async def admin_academic_years(request: Request):
