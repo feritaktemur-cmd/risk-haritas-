@@ -146,3 +146,9 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - GET /api/ram/riba/submissions/{id} (metadata + all targets; out-of-scope = 404)
 - Extra rams.is_active check (403) only for these two endpoints via _require_ram_riba_access.
 - Next: RAM RİBA frontend list/detail, İlçe aggregations, PDF export, "Nasıl hesaplandı?" panel.
+
+## 2026-06 — RAM RİBA frontend (salt-okunur)
+- /ram/riba (RamRiba.jsx): list + filters (year/district/level via /ram/risk-map/refs & /districts), 400ms debounced search, server pagination.
+- /ram/riba/submissions/:id (RamRibaSubmissionDetail.jsx): metadata, 2 special targets, all targets; NULL -> "Hesaplanamadı".
+- lib/ramRibaApi.js: shared session/axios helper (403 redirect only for password_change_required).
+- RamModules card added. Data note: existing submission 9a1c9a2f… has all 27 targets NULL ASP/rank (source data).
