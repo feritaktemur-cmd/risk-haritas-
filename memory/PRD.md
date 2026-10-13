@@ -162,3 +162,6 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - components/RamRibaTabs.jsx: Gelen Gönderimler (/ram/riba), Özel Hedef İstatistikleri (/ram/riba/special-targets), İlçe Ortalama ASP Analizi (pasif, Yakında).
 - pages/RamRibaSpecialTargets.jsx: year (auto active) + level required, optional district; summary cards, rank table, % bar.
 - RamRiba.jsx only got tabs + title "RİBA"; RamModules card renamed "RİBA". Detail page untouched.
+
+## 2026-06 — Özel Hedef İstatistikleri: "Tüm Kademeler"
+- RamRibaSpecialTargets.jsx: "Tüm Kademeler" option -> one request per level (refs), separate sections, frontend sum summary, per-level error + "eksik veri" warning. Özel Eğitim excluded from all-view by name (user choice). Stale results cleared on filter change.

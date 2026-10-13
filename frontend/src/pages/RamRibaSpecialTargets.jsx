@@ -5,6 +5,9 @@ import { ramGet } from "../lib/ramRibaApi";
 import { RamRibaTabs } from "../components/RamRibaTabs";
 
 const selectCls = "rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-400/60";
+const ALL = "all";
+const ALL_VIEW_EXCLUDED = ["özel eğitim"];
+const STATS_PATH = "/ram/riba/statistics/special-targets";
 
 const StatCard = ({ label, value, testid }) => (
   <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
@@ -13,11 +16,75 @@ const StatCard = ({ label, value, testid }) => (
   </div>
 );
 
+const TargetTable = ({ items, prefix }) => (
+  <div className="overflow-x-auto rounded-2xl border border-white/10">
+    <table className="w-full min-w-[720px] text-left text-sm" data-testid={`${prefix}-table`}>
+      <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
+        <tr>
+          {["Sıra", "MEB Kodu", "Hedef", "Seçen Okul", "Seçilme Yüzdesi"].map((h) => <th key={h} className="px-4 py-3 font-semibold">{h}</th>)}
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-white/5">
+        {items.map((t) => (
+          <tr key={t.target_id} className="text-slate-300 hover:bg-white/[0.02]" data-testid={`${prefix}-row-${t.meb_code}`}>
+            <td className="px-4 py-2.5 font-bold text-white" data-testid={`${prefix}-rank-${t.meb_code}`}>{t.rank}</td>
+            <td className="px-4 py-2.5 font-mono text-xs text-slate-400">{t.meb_code || "—"}</td>
+            <td className="px-4 py-2.5 text-white">{t.target_name || "—"}</td>
+            <td className="px-4 py-2.5" data-testid={`${prefix}-count-${t.meb_code}`}>{t.school_count}</td>
+            <td className="px-4 py-2.5">
+              <div className="flex items-center gap-3">
+                <span className="w-14 tabular-nums" data-testid={`${prefix}-pct-${t.meb_code}`}>%{Number(t.percentage).toFixed(1)}</span>
+                <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.min(100, t.percentage)}%` }} />
+                </div>
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
+
+const PctNote = ({ testid }) => (
+  <p className="mb-4 flex items-start gap-2 text-xs text-slate-400" data-testid={testid}>
+    <Info size={14} className="mt-0.5 shrink-0" /> Her okul iki özel hedef seçebildiği için yüzdelerin toplamı %100'ü aşabilir.
+  </p>
+);
+
+const LevelSection = ({ entry }) => {
+  const { level, data, error } = entry;
+  const prefix = `ramriba-stats-level-${level.id}`;
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-5" data-testid={prefix}>
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
+        <h3 className="text-base font-bold text-white" data-testid={`${prefix}-name`}>{level.name}</h3>
+        {data && (
+          <p className="text-xs text-slate-400">
+            Katılan okul: <span className="font-bold text-white" data-testid={`${prefix}-school-count`}>{data.participating_school_count}</span>
+            {" · "}Toplam seçim: <span className="font-bold text-white" data-testid={`${prefix}-total-selections`}>{data.total_selections}</span>
+          </p>
+        )}
+      </div>
+      {error ? (
+        <div data-testid={`${prefix}-error`} className="flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300 ring-1 ring-rose-400/20">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{error}</span>
+        </div>
+      ) : data.participating_school_count === 0 ? (
+        <p className="py-4 text-center text-sm text-slate-400" data-testid={`${prefix}-empty`}>Bu kademede henüz gönderim bulunmuyor.</p>
+      ) : (
+        <TargetTable items={data.items || []} prefix={prefix} />
+      )}
+    </section>
+  );
+};
+
 export default function RamRibaSpecialTargets() {
   const navigate = useNavigate();
   const [refs, setRefs] = useState({ academic_years: [], education_levels: [], districts: [] });
   const [filters, setFilters] = useState({ academic_year_id: "", education_level_id: "", district_id: "" });
   const [data, setData] = useState(null);
+  const [allData, setAllData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -36,28 +103,48 @@ export default function RamRibaSpecialTargets() {
     })();
   }, [navigate]);
 
+  const isAll = filters.education_level_id === ALL;
   const ready = filters.academic_year_id !== "" && filters.education_level_id !== "";
+  const allLevels = refs.education_levels.filter((l) => !ALL_VIEW_EXCLUDED.includes((l.name || "").toLocaleLowerCase("tr")));
 
   useEffect(() => {
-    if (!ready) { setData(null); return; }
+    setData(null);
+    setAllData(null);
+    setError(null);
+    if (!ready) return;
     let active = true;
+    const base = { academic_year_id: filters.academic_year_id };
+    if (filters.district_id !== "") base.district_id = filters.district_id;
     (async () => {
       setLoading(true);
-      const params = { academic_year_id: filters.academic_year_id, education_level_id: filters.education_level_id };
-      if (filters.district_id !== "") params.district_id = filters.district_id;
-      try {
-        const res = await ramGet(navigate, "/ram/riba/statistics/special-targets", params);
-        if (active) { setData(res); setError(null); }
-      } catch (e) {
-        if (active && !e.silent) { setData(null); setError(e.message || "İstatistikler yüklenemedi. Lütfen tekrar deneyin."); }
+      if (isAll) {
+        const results = await Promise.all(allLevels.map(async (level) => {
+          try {
+            return { level, data: await ramGet(navigate, STATS_PATH, { ...base, education_level_id: level.id }) };
+          } catch (e) {
+            return { level, silent: e.silent, error: e.message || "Bu kademenin istatistikleri yüklenemedi." };
+          }
+        }));
+        if (active && !results.some((r) => r.silent)) setAllData(results);
+      } else {
+        try {
+          const res = await ramGet(navigate, STATS_PATH, { ...base, education_level_id: filters.education_level_id });
+          if (active) setData(res);
+        } catch (e) {
+          if (active && !e.silent) setError(e.message || "İstatistikler yüklenemedi. Lütfen tekrar deneyin.");
+        }
       }
       if (active) setLoading(false);
     })();
     return () => { active = false; };
-  }, [navigate, ready, filters]);
+  }, [navigate, ready, isAll, filters, refs.education_levels]);
 
   const setFilter = (k) => (e) => setFilters((f) => ({ ...f, [k]: e.target.value }));
   const items = data?.items || [];
+  const okLevels = (allData || []).filter((r) => r.data);
+  const sumSchools = okLevels.reduce((s, r) => s + (r.data.participating_school_count || 0), 0);
+  const sumSelections = okLevels.reduce((s, r) => s + (r.data.total_selections || 0), 0);
+  const hasPartialError = (allData || []).some((r) => r.error);
 
   return (
     <div className="min-h-screen bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(16,185,129,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(99,102,241,0.10),transparent)]">
@@ -90,6 +177,7 @@ export default function RamRibaSpecialTargets() {
           </select>
           <select value={filters.education_level_id} onChange={setFilter("education_level_id")} data-testid="ramriba-stats-level-filter" className={selectCls}>
             <option value="">Kademe Seçin</option>
+            <option value={ALL}>Tüm Kademeler</option>
             {refs.education_levels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
           <select value={filters.district_id} onChange={setFilter("district_id")} data-testid="ramriba-stats-district-filter" className={selectCls}>
@@ -107,6 +195,26 @@ export default function RamRibaSpecialTargets() {
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center text-sm text-slate-400" data-testid="ramriba-stats-select-prompt">
             İstatistikleri görüntülemek için eğitim yılı ve kademe seçin.
           </div>
+        ) : isAll ? (
+          !allData ? (
+            <div className="grid place-items-center py-16"><Loader2 size={28} className="animate-spin text-emerald-300" /></div>
+          ) : (
+            <div data-testid="ramriba-stats-all">
+              <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <StatCard label="Toplam Katılan Okul (Tüm Kademeler)" value={sumSchools} testid="ramriba-stats-all-school-count" />
+                <StatCard label="Toplam Özel Hedef Seçimi (Tüm Kademeler)" value={sumSelections} testid="ramriba-stats-all-total-selections" />
+              </div>
+              {hasPartialError && (
+                <div data-testid="ramriba-stats-all-partial-warning" className="mb-4 flex items-start gap-2 rounded-xl bg-amber-500/10 p-3 text-sm text-amber-300 ring-1 ring-amber-400/20">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>Eksik veri: Bazı kademelerin istatistikleri yüklenemedi; genel toplam yalnız yüklenen kademeleri içerir.</span>
+                </div>
+              )}
+              <PctNote testid="ramriba-stats-all-note" />
+              <div className="space-y-4">
+                {allData.map((entry) => <LevelSection key={entry.level.id} entry={entry} />)}
+              </div>
+            </div>
+          )
         ) : !data ? (
           <div className="grid place-items-center py-16"><Loader2 size={28} className="animate-spin text-emerald-300" /></div>
         ) : data.participating_school_count === 0 ? (
@@ -119,36 +227,8 @@ export default function RamRibaSpecialTargets() {
               <StatCard label="Katılan Okul Sayısı" value={data.participating_school_count} testid="ramriba-stats-school-count" />
               <StatCard label="Toplam Özel Hedef Seçimi" value={data.total_selections} testid="ramriba-stats-total-selections" />
             </div>
-            <p className="mb-4 flex items-start gap-2 text-xs text-slate-400" data-testid="ramriba-stats-note">
-              <Info size={14} className="mt-0.5 shrink-0" /> Her okul iki özel hedef seçebildiği için yüzdelerin toplamı %100'ü aşabilir.
-            </p>
-            <div className="overflow-x-auto rounded-2xl border border-white/10">
-              <table className="w-full min-w-[720px] text-left text-sm" data-testid="ramriba-stats-table">
-                <thead className="bg-white/[0.04] text-xs uppercase tracking-wide text-slate-400">
-                  <tr>
-                    {["Sıra", "MEB Kodu", "Hedef", "Seçen Okul", "Seçilme Yüzdesi"].map((h) => <th key={h} className="px-4 py-3 font-semibold">{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {items.map((t) => (
-                    <tr key={t.target_id} className="text-slate-300 hover:bg-white/[0.02]" data-testid={`ramriba-stats-row-${t.meb_code}`}>
-                      <td className="px-4 py-2.5 font-bold text-white" data-testid={`ramriba-stats-rank-${t.meb_code}`}>{t.rank}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-slate-400">{t.meb_code || "—"}</td>
-                      <td className="px-4 py-2.5 text-white">{t.target_name || "—"}</td>
-                      <td className="px-4 py-2.5" data-testid={`ramriba-stats-count-${t.meb_code}`}>{t.school_count}</td>
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-3">
-                          <span className="w-14 tabular-nums" data-testid={`ramriba-stats-pct-${t.meb_code}`}>%{Number(t.percentage).toFixed(1)}</span>
-                          <div className="h-1.5 w-32 overflow-hidden rounded-full bg-white/10">
-                            <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.min(100, t.percentage)}%` }} />
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <PctNote testid="ramriba-stats-note" />
+            <TargetTable items={items} prefix="ramriba-stats" />
           </>
         )}
       </main>
