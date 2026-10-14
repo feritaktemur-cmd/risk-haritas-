@@ -8,6 +8,8 @@ import logging
 import os
 import hashlib
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
+from uuid import UUID
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -5360,6 +5362,115 @@ async def ram_riba_special_target_stats(
         "items": items,
     })
     return result
+
+
+_RAM_RIBA_ASP_NOTE = (
+    "Bu analiz PDRPUSULA'nın RAM düzeyindeki istatistiksel özetidir; "
+    "MEB'in resmî ilçe ASP hesaplaması değildir."
+)
+
+
+@api.get("/ram/riba/statistics/average-asp")
+async def ram_riba_average_asp_stats(
+    request: Request,
+    academic_year_id: UUID,
+    education_level_id: int,
+    district_id: int = None,
+):
+    """Read-only per-target average of school ASP snapshots within the RAM's scope.
+
+    Latest submission per (school, year, level) wins. NULL ASP excluded (never 0).
+    Direct mean over schools (not mean of district means). Rank on 2-dp mean, RANK.EQ.
+    """
+    client, acc = _require_ram_riba_access(request)
+    district_ids = _ram_responsible_district_ids(client, acc["ram_id"])
+    if district_id is not None:
+        if district_id not in district_ids:
+            raise HTTPException(status_code=403, detail="Bu ilçe için yetkiniz bulunmuyor.")
+        district_ids = [district_id]
+    result = {
+        "academic_year_id": str(academic_year_id),
+        "education_level_id": education_level_id,
+        "district_id": district_id,
+        "participating_school_count": 0,
+        "targets": [],
+        "note": _RAM_RIBA_ASP_NOTE,
+    }
+    if not district_ids:
+        return result
+    schools = _fetch_all(
+        lambda a, b: client.table("schools").select("id,district_id").in_("district_id", district_ids).range(a, b)
+    )
+    scoped = {s["id"] for s in schools if s.get("district_id") in district_ids}
+    if not scoped:
+        return result
+
+    subs = _fetch_all(
+        lambda a, b: client.table("riba_submissions")
+        .select("id,school_id,submitted_at")
+        .in_("school_id", list(scoped))
+        .eq("academic_year_id", str(academic_year_id))
+        .eq("education_level_id", education_level_id)
+        .order("submitted_at", desc=True)
+        .order("id", desc=True)
+        .range(a, b)
+    )
+    latest = {}
+    for s in subs:
+        if s.get("school_id") in scoped and s["school_id"] not in latest:
+            latest[s["school_id"]] = s["id"]
+    if not latest:
+        return result
+    sub_to_school = {sid: sch for sch, sid in latest.items()}
+
+    rows = []
+    sub_ids = list(sub_to_school.keys())
+    for i in range(0, len(sub_ids), 200):
+        chunk = sub_ids[i:i + 200]
+        rows.extend(_fetch_all(
+            lambda a, b, chunk=chunk: client.table("riba_submission_target_results")
+            .select("submission_id,target_id,meb_code,target_name,average_asp")
+            .in_("submission_id", chunk)
+            .range(a, b)
+        ))
+
+    agg = {}
+    for r in rows:
+        tid = r.get("target_id")
+        school = sub_to_school.get(r.get("submission_id"))
+        if tid is None or school is None:
+            continue
+        a = agg.setdefault(tid, {"meta": (r.get("meb_code"), r.get("target_name")), "schools": set(), "asp": {}})
+        a["schools"].add(school)
+        if r.get("average_asp") is not None:
+            a["asp"][school] = Decimal(str(r["average_asp"]))
+
+    targets = []
+    for tid, a in agg.items():
+        vals = list(a["asp"].values())
+        avg = (sum(vals) / len(vals)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if vals else None
+        targets.append({
+            "target_id": tid,
+            "meb_code": a["meta"][0],
+            "target_name": a["meta"][1],
+            "participating_school_count": len(a["schools"]),
+            "valid_school_count": len(vals),
+            "_avg": avg,
+        })
+    targets.sort(key=lambda t: (t["_avg"] is None, -(t["_avg"] or 0), t["meb_code"] or ""))
+    prev, rank = None, None
+    for i, t in enumerate(targets, start=1):
+        avg = t.pop("_avg")
+        if avg is None:
+            t["average_asp"], t["rank"] = None, None
+            continue
+        if avg != prev:
+            rank, prev = i, avg
+        t["average_asp"], t["rank"] = float(avg), rank
+
+    result.update({"participating_school_count": len(latest), "targets": targets})
+    return result
+
 
 
 

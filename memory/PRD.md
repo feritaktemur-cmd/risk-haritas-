@@ -165,3 +165,8 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 
 ## 2026-06 — Özel Hedef İstatistikleri: "Tüm Kademeler"
 - RamRibaSpecialTargets.jsx: "Tüm Kademeler" option -> one request per level (refs), separate sections, frontend sum summary, per-level error + "eksik veri" warning. Özel Eğitim excluded from all-view by name (user choice). Stale results cleared on filter change.
+
+## 2026-06 — RAM RİBA İlçe Ortalama ASP Analizi (backend v1.0)
+- GET /api/ram/riba/statistics/average-asp?academic_year_id(UUID)&education_level_id(int)[&district_id]
+- Latest submission per school; NULL ASP excluded; direct school mean (not mean of district means); HALF_UP 2dp; RANK.EQ on rounded value; NULL last; ties/NULLs by meb_code; fixed `note` (not official MEB calc).
+- Next: frontend for the passive "İlçe Ortalama ASP Analizi" tab.
