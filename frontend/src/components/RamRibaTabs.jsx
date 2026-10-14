@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 const TABS = [
   { key: "submissions", label: "Gelen Gönderimler", path: "/ram/riba" },
   { key: "special-targets", label: "Özel Hedef İstatistikleri", path: "/ram/riba/special-targets" },
-  { key: "district-asp", label: "İlçe Ortalama ASP Analizi", disabled: true },
+  { key: "district-asp", label: "İlçe Ortalama ASP Analizi", path: "/ram/riba/average-asp" },
 ];
 
 export const RamRibaTabs = () => {

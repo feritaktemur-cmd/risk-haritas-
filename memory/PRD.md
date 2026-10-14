@@ -170,3 +170,6 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - GET /api/ram/riba/statistics/average-asp?academic_year_id(UUID)&education_level_id(int)[&district_id]
 - Latest submission per school; NULL ASP excluded; direct school mean (not mean of district means); HALF_UP 2dp; RANK.EQ on rounded value; NULL last; ties/NULLs by meb_code; fixed `note` (not official MEB calc).
 - Next: frontend for the passive "İlçe Ortalama ASP Analizi" tab.
+
+## 2026-06 — İlçe Ortalama ASP Analizi sekmesi etkin (basit ekran)
+- pages/RamRibaAverageAsp.jsx at /ram/riba/average-asp; tab enabled in RamRibaTabs. Single level, year auto-active, optional district; NULL -> "Hesaplanamadı"; shows backend `note`.
