@@ -47,7 +47,51 @@ const AspTable = ({ targets, prefix }) => (
   </div>
 );
 
-const LevelSection = ({ entry }) => {
+const fmtAsp = (v) => Number(v).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const GRID = "sm:grid-cols-[minmax(0,16rem)_1fr_4.5rem]";
+
+const AspBarChart = ({ targets, context, prefix }) => {
+  const top = targets
+    .filter((t) => t.average_asp !== null && t.average_asp !== undefined)
+    .sort((a, b) => (a.rank - b.rank) || String(a.meb_code || "").localeCompare(String(b.meb_code || ""), "tr"))
+    .slice(0, 10);
+  return (
+    <figure className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5" data-testid={`${prefix}-chart`}>
+      <figcaption className="mb-4">
+        <p className="text-sm font-bold text-white" data-testid={`${prefix}-chart-title`}>Ortalama ASP'si En Yüksek Hedefler (İlk 10)</p>
+        <p className="mt-0.5 text-xs text-slate-400" data-testid={`${prefix}-chart-context`}>{context}</p>
+      </figcaption>
+      {top.length === 0 ? (
+        <p className="py-4 text-center text-sm text-slate-400" data-testid={`${prefix}-chart-empty`}>Grafik oluşturmak için hesaplanmış ASP verisi bulunmuyor.</p>
+      ) : (
+        <>
+          <div className="space-y-3">
+            {top.map((t) => (
+              <div key={t.target_id} className={`grid gap-1.5 sm:items-center sm:gap-4 ${GRID}`} data-testid={`${prefix}-chart-bar-${t.meb_code}`}>
+                <p className="break-words text-xs text-slate-200"><span className="font-mono text-slate-400">{t.meb_code}</span> – {t.target_name}</p>
+                <div className="relative h-3 w-full overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.min(100, Math.max(0, t.average_asp))}%` }} />
+                  <div className="absolute inset-y-0 left-1/2 w-px bg-white/40" />
+                </div>
+                <p className="text-xs font-semibold tabular-nums text-slate-200 sm:text-right" data-testid={`${prefix}-chart-value-${t.meb_code}`}>{fmtAsp(t.average_asp)}</p>
+              </div>
+            ))}
+          </div>
+          <div className={`mt-2 hidden text-[10px] text-slate-500 sm:grid sm:gap-4 ${GRID}`}>
+            <span />
+            <div className="flex justify-between">
+              {[0, 25, 50, 75, 100].map((v) => <span key={v} className={v === 50 ? "font-semibold text-slate-300" : ""}>{v}</span>)}
+            </div>
+            <span />
+          </div>
+          <p className="mt-2 text-[10px] text-slate-500">Ölçek 0–100 ASP puanıdır; dikey çizgi 50 referans değerini gösterir.</p>
+        </>
+      )}
+    </figure>
+  );
+};
+
+const LevelSection = ({ entry, context }) => {
   const { level, data, error } = entry;
   const prefix = `ramriba-asp-level-${level.id}`;
   return (
@@ -68,7 +112,10 @@ const LevelSection = ({ entry }) => {
       ) : data.participating_school_count === 0 ? (
         <p className="py-4 text-center text-sm text-slate-400" data-testid={`${prefix}-empty`}>Bu kademede henüz gönderim bulunmuyor.</p>
       ) : (
-        <AspTable targets={data.targets || []} prefix={prefix} />
+        <>
+          <AspBarChart targets={data.targets || []} prefix={prefix} context={`${context.year} · ${level.name} · ${context.district}`} />
+          <AspTable targets={data.targets || []} prefix={prefix} />
+        </>
       )}
     </section>
   );
@@ -141,6 +188,12 @@ export default function RamRibaAverageAsp() {
   const sumTargets = okLevels.reduce((s, r) => s + (r.data.targets || []).length, 0);
   const hasPartialError = (allData || []).some((r) => r.error);
   const allNote = okLevels.find((r) => r.data.note)?.data.note;
+  const nameOf = (list, id) => list.find((x) => String(x.id) === String(id))?.name;
+  const ctx = {
+    year: nameOf(refs.academic_years, filters.academic_year_id) || "—",
+    district: filters.district_id === "" ? "Tüm Sorumlu İlçeler" : (nameOf(refs.districts, filters.district_id) || "—"),
+  };
+  const levelName = nameOf(refs.education_levels, filters.education_level_id) || "—";
 
   return (
     <div className="min-h-screen bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(16,185,129,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(99,102,241,0.10),transparent)]">
@@ -208,7 +261,7 @@ export default function RamRibaAverageAsp() {
               )}
               {allNote && <Note text={allNote} testid="ramriba-asp-all-note" />}
               <div className="space-y-4">
-                {allData.map((entry) => <LevelSection key={entry.level.id} entry={entry} />)}
+                {allData.map((entry) => <LevelSection key={entry.level.id} entry={entry} context={ctx} />)}
               </div>
             </div>
           )
@@ -225,6 +278,7 @@ export default function RamRibaAverageAsp() {
               <StatCard label="Hedef Sayısı" value={targets.length} testid="ramriba-asp-target-count" />
             </div>
             {data.note && <Note text={data.note} testid="ramriba-asp-note" />}
+            <AspBarChart targets={targets} prefix="ramriba-asp" context={`${ctx.year} · ${levelName} · ${ctx.district}`} />
             <AspTable targets={targets} prefix="ramriba-asp" />
           </>
         )}

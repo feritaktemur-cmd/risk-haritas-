@@ -181,3 +181,4 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 ## 2026-06 — RAM ASP gölge doğrulama (DB'ye yazılmadı)
 - Root cause of 27 NULL ASP in Çukurova submission: 1 parent response, 0 teacher → teacher stddev 0 → standard score NULL → ASP NULL (correct behavior).
 - Shadow test (/tmp/riba_shadow): 6 synthetic schools (Okul Öncesi + Ortaokul), real riba_calc/_riba_compute_close_plan/RAM endpoint vs independent Excel formulas (evaluated with `formulas` lib in /tmp/fx): class 264, school 198, RAM 198 comparisons, 0 mismatches.
+- 2026-06: ASP Analizi yatay çubuk grafik (top 10 by backend rank, meb_code tiebreak, fixed 0–100 scale with 50 reference line, per level in Tüm Kademeler, empty-ASP message).
