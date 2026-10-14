@@ -177,3 +177,7 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - 2026-06: Özel Hedef İstatistikleri: pure-Tailwind horizontal bar chart (top 10, count desc / meb_code asc, 0-100 scale, title + filter context), per level in Tüm Kademeler.
 - 2026-06: Özel Hedef İstatistikleri PDF İndir (lib/ramRibaSpecialTargetsPdf.js, jsPDF+autotable+Roboto, vector bar chart, per-level pages in Tüm Kademeler). RAM name omitted (no endpoint) — pending small backend task.
 - 2026-06: ram_name added to /ram/riba/statistics/special-targets & /average-asp (via _require_ram_riba_access rams query); Özel Hedef PDF header shows 'RAM: …'.
+
+## 2026-06 — RAM ASP gölge doğrulama (DB'ye yazılmadı)
+- Root cause of 27 NULL ASP in Çukurova submission: 1 parent response, 0 teacher → teacher stddev 0 → standard score NULL → ASP NULL (correct behavior).
+- Shadow test (/tmp/riba_shadow): 6 synthetic schools (Okul Öncesi + Ortaokul), real riba_calc/_riba_compute_close_plan/RAM endpoint vs independent Excel formulas (evaluated with `formulas` lib in /tmp/fx): class 264, school 198, RAM 198 comparisons, 0 mismatches.
