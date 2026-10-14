@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, ArrowLeft, AlertTriangle, ClipboardCheck, Info } from "lucide-react";
+import { Loader2, ArrowLeft, AlertTriangle, ClipboardCheck, Info, FileDown } from "lucide-react";
 import { ramGet } from "../lib/ramRibaApi";
 import { RamRibaTabs } from "../components/RamRibaTabs";
+import { generateRamRibaSpecialTargetsPdf, topTargets } from "../lib/ramRibaSpecialTargetsPdf";
 
 const selectCls = "rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-400/60";
 const ALL = "all";
@@ -53,9 +54,7 @@ const PctNote = ({ testid }) => (
 );
 
 const TargetBarChart = ({ items, context, prefix }) => {
-  const top = [...items]
-    .sort((a, b) => (b.school_count - a.school_count) || String(a.meb_code || "").localeCompare(String(b.meb_code || ""), "tr"))
-    .slice(0, 10);
+  const top = topTargets(items);
   return (
     <figure className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5" data-testid={`${prefix}-chart`}>
       <figcaption className="mb-4">
@@ -120,6 +119,8 @@ export default function RamRibaSpecialTargets() {
   const [allData, setAllData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -184,6 +185,22 @@ export default function RamRibaSpecialTargets() {
     district: filters.district_id === "" ? "Tüm Sorumlu İlçeler" : (nameOf(refs.districts, filters.district_id) || "—"),
   };
   const levelName = nameOf(refs.education_levels, filters.education_level_id) || "—";
+  const pdfReady = !loading && !error && (isAll ? !!allData : !!data);
+
+  const downloadPdf = async () => {
+    setPdfBusy(true);
+    try {
+      const sections = isAll
+        ? allData.map((r) => ({ levelName: r.level.name, data: r.data, error: r.error }))
+        : [{ levelName, data }];
+      await generateRamRibaSpecialTargetsPdf(sections, {
+        yearName: ctx.year, districtName: ctx.district, levelLabel: isAll ? "Tüm Kademeler" : levelName, isAll,
+      });
+    } catch (_) {
+      setPdfError("PDF oluşturulamadı. Lütfen tekrar deneyin.");
+    }
+    setPdfBusy(false);
+  };
 
   return (
     <div className="min-h-screen bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(16,185,129,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(99,102,241,0.10),transparent)]">
@@ -224,7 +241,12 @@ export default function RamRibaSpecialTargets() {
             {refs.districts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
           {loading && <Loader2 size={16} className="animate-spin text-emerald-300" data-testid="ramriba-stats-loading" />}
+          <button onClick={() => { setPdfError(null); downloadPdf(); }} disabled={!pdfReady || pdfBusy} data-testid="ramriba-stats-pdf-btn"
+            className="ml-auto inline-flex items-center gap-2 rounded-full bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-300 ring-1 ring-emerald-400/30 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40">
+            {pdfBusy ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />} PDF İndir
+          </button>
         </div>
+        {pdfError && <p className="-mt-3 mb-4 text-xs text-rose-300" data-testid="ramriba-stats-pdf-error">{pdfError}</p>}
 
         {error ? (
           <div data-testid="ramriba-stats-error" className="flex items-start gap-2 rounded-xl bg-rose-500/10 p-4 text-sm text-rose-300 ring-1 ring-rose-400/20">
