@@ -173,3 +173,4 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 
 ## 2026-06 — İlçe Ortalama ASP Analizi sekmesi etkin (basit ekran)
 - pages/RamRibaAverageAsp.jsx at /ram/riba/average-asp; tab enabled in RamRibaTabs. Single level, year auto-active, optional district; NULL -> "Hesaplanamadı"; shows backend `note`.
+- 2026-06: ASP Analizi 'Tüm Kademeler' (per-level requests, Özel Eğitim excluded, summed cards labelled as level-based totals).
