@@ -52,7 +52,37 @@ const PctNote = ({ testid }) => (
   </p>
 );
 
-const LevelSection = ({ entry }) => {
+const TargetBarChart = ({ items, context, prefix }) => {
+  const top = [...items]
+    .sort((a, b) => (b.school_count - a.school_count) || String(a.meb_code || "").localeCompare(String(b.meb_code || ""), "tr"))
+    .slice(0, 10);
+  return (
+    <figure className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5" data-testid={`${prefix}-chart`}>
+      <figcaption className="mb-4">
+        <p className="text-sm font-bold text-white" data-testid={`${prefix}-chart-title`}>En Çok Seçilen Özel Hedefler (İlk 10)</p>
+        <p className="mt-0.5 text-xs text-slate-400" data-testid={`${prefix}-chart-context`}>{context}</p>
+      </figcaption>
+      <div className="space-y-3">
+        {top.map((t) => (
+          <div key={t.target_id} className="grid gap-1.5 sm:grid-cols-[minmax(0,16rem)_1fr_auto] sm:items-center sm:gap-4" data-testid={`${prefix}-chart-bar-${t.meb_code}`}>
+            <p className="break-words text-xs text-slate-200"><span className="font-mono text-slate-400">{t.meb_code}</span> – {t.target_name}</p>
+            <div className="h-3 w-full overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.min(100, Math.max(0, t.percentage))}%` }} />
+            </div>
+            <p className="text-xs tabular-nums text-slate-300 sm:text-right">{t.school_count} okul · %{Number(t.percentage).toFixed(1)}</p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 hidden text-[10px] text-slate-500 sm:grid sm:grid-cols-[minmax(0,16rem)_1fr_auto] sm:gap-4">
+        <span />
+        <div className="flex justify-between">{[0, 25, 50, 75, 100].map((v) => <span key={v}>%{v}</span>)}</div>
+        <span className="invisible">00 okul · %100.0</span>
+      </div>
+    </figure>
+  );
+};
+
+const LevelSection = ({ entry, context }) => {
   const { level, data, error } = entry;
   const prefix = `ramriba-stats-level-${level.id}`;
   return (
@@ -73,7 +103,10 @@ const LevelSection = ({ entry }) => {
       ) : data.participating_school_count === 0 ? (
         <p className="py-4 text-center text-sm text-slate-400" data-testid={`${prefix}-empty`}>Bu kademede henüz gönderim bulunmuyor.</p>
       ) : (
-        <TargetTable items={data.items || []} prefix={prefix} />
+        <>
+          <TargetBarChart items={data.items || []} prefix={prefix} context={`${context.year} · ${level.name} · ${context.district}`} />
+          <TargetTable items={data.items || []} prefix={prefix} />
+        </>
       )}
     </section>
   );
@@ -145,6 +178,12 @@ export default function RamRibaSpecialTargets() {
   const sumSchools = okLevels.reduce((s, r) => s + (r.data.participating_school_count || 0), 0);
   const sumSelections = okLevels.reduce((s, r) => s + (r.data.total_selections || 0), 0);
   const hasPartialError = (allData || []).some((r) => r.error);
+  const nameOf = (list, id) => list.find((x) => String(x.id) === String(id))?.name;
+  const ctx = {
+    year: nameOf(refs.academic_years, filters.academic_year_id) || "—",
+    district: filters.district_id === "" ? "Tüm Sorumlu İlçeler" : (nameOf(refs.districts, filters.district_id) || "—"),
+  };
+  const levelName = nameOf(refs.education_levels, filters.education_level_id) || "—";
 
   return (
     <div className="min-h-screen bg-[#0b1120] bg-[radial-gradient(60rem_40rem_at_80%_-10%,rgba(16,185,129,0.15),transparent),radial-gradient(50rem_30rem_at_-10%_20%,rgba(99,102,241,0.10),transparent)]">
@@ -211,7 +250,7 @@ export default function RamRibaSpecialTargets() {
               )}
               <PctNote testid="ramriba-stats-all-note" />
               <div className="space-y-4">
-                {allData.map((entry) => <LevelSection key={entry.level.id} entry={entry} />)}
+                {allData.map((entry) => <LevelSection key={entry.level.id} entry={entry} context={ctx} />)}
               </div>
             </div>
           )
@@ -228,6 +267,7 @@ export default function RamRibaSpecialTargets() {
               <StatCard label="Toplam Özel Hedef Seçimi" value={data.total_selections} testid="ramriba-stats-total-selections" />
             </div>
             <PctNote testid="ramriba-stats-note" />
+            <TargetBarChart items={items} prefix="ramriba-stats" context={`${ctx.year} · ${levelName} · ${ctx.district}`} />
             <TargetTable items={items} prefix="ramriba-stats" />
           </>
         )}
