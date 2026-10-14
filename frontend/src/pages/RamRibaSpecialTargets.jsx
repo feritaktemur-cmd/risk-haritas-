@@ -194,6 +194,7 @@ export default function RamRibaSpecialTargets() {
         ? allData.map((r) => ({ levelName: r.level.name, data: r.data, error: r.error }))
         : [{ levelName, data }];
       await generateRamRibaSpecialTargetsPdf(sections, {
+        ramName: sections.find((s) => s.data?.ram_name)?.data.ram_name,
         yearName: ctx.year, districtName: ctx.district, levelLabel: isAll ? "Tüm Kademeler" : levelName, isAll,
       });
     } catch (_) {

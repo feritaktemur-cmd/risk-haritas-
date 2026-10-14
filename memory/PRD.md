@@ -176,3 +176,4 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - 2026-06: ASP Analizi 'Tüm Kademeler' (per-level requests, Özel Eğitim excluded, summed cards labelled as level-based totals).
 - 2026-06: Özel Hedef İstatistikleri: pure-Tailwind horizontal bar chart (top 10, count desc / meb_code asc, 0-100 scale, title + filter context), per level in Tüm Kademeler.
 - 2026-06: Özel Hedef İstatistikleri PDF İndir (lib/ramRibaSpecialTargetsPdf.js, jsPDF+autotable+Roboto, vector bar chart, per-level pages in Tüm Kademeler). RAM name omitted (no endpoint) — pending small backend task.
+- 2026-06: ram_name added to /ram/riba/statistics/special-targets & /average-asp (via _require_ram_riba_access rams query); Özel Hedef PDF header shows 'RAM: …'.

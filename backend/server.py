@@ -5134,9 +5134,10 @@ def _require_ram_riba_access(request: Request):
     """_require_ram_ready + parent rams.is_active check (RAM RİBA endpoints only)."""
     _uid, acc = _require_ram_ready(request)
     client = get_service_client()
-    rams = client.table("rams").select("id,is_active").eq("id", acc["ram_id"]).limit(1).execute().data
+    rams = client.table("rams").select("id,name,is_active").eq("id", acc["ram_id"]).limit(1).execute().data
     if not rams or not rams[0].get("is_active"):
         raise HTTPException(status_code=403, detail="Bu hesapla giriş yapılamıyor. Lütfen Genel Admin ile iletişime geçin.")
+    acc["ram_name"] = rams[0].get("name")
     return client, acc
 
 
@@ -5297,6 +5298,7 @@ async def ram_riba_special_target_stats(
         "academic_year_id": academic_year_id,
         "education_level_id": education_level_id,
         "district_id": district_id,
+        "ram_name": acc.get("ram_name"),
         "participating_school_count": 0,
         "total_selections": 0,
         "items": [],
@@ -5392,6 +5394,7 @@ async def ram_riba_average_asp_stats(
         "academic_year_id": str(academic_year_id),
         "education_level_id": education_level_id,
         "district_id": district_id,
+        "ram_name": acc.get("ram_name"),
         "participating_school_count": 0,
         "targets": [],
         "note": _RAM_RIBA_ASP_NOTE,

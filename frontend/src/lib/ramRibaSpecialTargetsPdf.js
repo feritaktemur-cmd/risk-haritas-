@@ -15,7 +15,7 @@ export const topTargets = (items) => [...(items || [])]
 const EMERALD = [16, 185, 129];
 const PCT_NOTE = "Her okul iki özel hedef seçebildiği için yüzdelerin toplamı %100'ü aşabilir.";
 
-// sections: [{ levelName, data, error }]; meta: { yearName, districtName, levelLabel, isAll }
+// sections: [{ levelName, data, error }]; meta: { ramName, yearName, districtName, levelLabel, isAll }
 export async function generateRamRibaSpecialTargetsPdf(sections, meta) {
   const jsPDF = (await import("jspdf")).default;
   const autoTable = (await import("jspdf-autotable")).default;
@@ -112,6 +112,7 @@ export async function generateRamRibaSpecialTargetsPdf(sections, meta) {
   y += 18;
   font(10, false, 70);
   [
+    ...(meta.ramName ? [`RAM: ${meta.ramName}`] : []),
     `Eğitim Yılı: ${meta.yearName || "—"}`,
     `İlçe: ${meta.districtName || "—"}`,
     `Kademe: ${meta.levelLabel || "—"}`,
