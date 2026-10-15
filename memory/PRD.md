@@ -183,3 +183,15 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Shadow test (/tmp/riba_shadow): 6 synthetic schools (Okul Öncesi + Ortaokul), real riba_calc/_riba_compute_close_plan/RAM endpoint vs independent Excel formulas (evaluated with `formulas` lib in /tmp/fx): class 264, school 198, RAM 198 comparisons, 0 mismatches.
 - 2026-06: ASP Analizi yatay çubuk grafik (top 10 by backend rank, meb_code tiebreak, fixed 0–100 scale with 50 reference line, per level in Tüm Kademeler, empty-ASP message).
 - 2026-06: ASP Analizi PDF İndir (lib/ramRibaAverageAspPdf.js, standalone; RAM adı, filtre bağlamı, 0–100 grafik + 50 çizgisi, tablo NULL='Hesaplanamadı', backend note).
+
+
+## 2026-06 — BEP Türkçe 1–8. sınıf staging aktarımı (TAMAMLANDI)
+- Kaynak: PDRPUSULA_Turkce_1_8_Ayristirma_Duzeltilmis_Havuz.csv — 3.004 kayıt, SHA-256 13e5fb18bd6062b06f1e67818c50b7dd32747144d14ed98eb0f6804063d2c000.
+- 2–8. sınıf SQL'leri (generate_tr_grade_seed_existing_version.py, --existing-version) ile üretildi: 2.719 kayıt, 0 hata. Dosyalar: /app/tools/bep_curriculum_import/output/tr_grades2_8_existing_version/ (+SHA256SUMS.txt). Kullanıcı Supabase SQL Editor'da sırayla çalıştırdı.
+- Salt-okunur doğrulama: 3.004 ham kayıt, 56 tema, 56 kaynak belge, 1.047 tema kazanımı, 3.004 bileşen; 8 aktarım partisi (error_count=0); 31 bütünlük kontrolü sorunsuz; ham değerler güncel CSV ile birebir aynı.
+- Durum: TYMM-2024-TR sürümü ve 8 sınıfın tamamı `draft`. Kanonik kayıt / inceleme kararı = 0; tüm kazanım ve bileşenler `unmapped`. Yayın, eşleştirme, migration yapılmadı.
+
+### Sonraki değerlendirme konuları (açık)
+- 184 `warning` ham satırı (sınıf 1: 16, 2: 55, 3: 20, 5: 75, 7: 18; 4, 6, 8: 0). Uyarı türleri: temalar arası farklı kazanım metni, görünmez karakter/fazla boşluk. Karar bekliyor.
+- `curriculum_grades.import_batch_id` 8 sınıfın tamamında NULL (bağ ham satırlar üzerinden). Yayın öncesi doldurulup doldurulmayacağı kararlaştırılacak.
+- Bekleyen sonraki adımlar (başlatılmadı): kanonik kaynak PDF kanıtları + eşleştirme/yayın (Aşama 2), 033_bep_records.sql, BEP RPC fonksiyonları, öğretmen arayüzü.
