@@ -1,0 +1,24 @@
+{
+  "validator_version": "bep-tr-seed-1.0",
+  "source_file": "havuz.csv",
+  "full_file_sha256": "13e5fb18bd6062b06f1e67818c50b7dd32747144d14ed98eb0f6804063d2c000",
+  "full_file_rows": 3004,
+  "grade": 6,
+  "existing_version": true,
+  "subset_sha256": "efbf5bcc67afc6b88e3c5835b14c6415f6d79096d8c43815807ecf874427727a",
+  "errors": [],
+  "warnings": [
+    "satır 1964: Süreç Bileşeni Metni: görünmez karakter/fazla boşluk"
+  ],
+  "expected_counts": {
+    "rows": 442,
+    "themes": 6,
+    "theme_outcomes": 153,
+    "theme_components": 442,
+    "source_documents": 6,
+    "warning_rows": 0,
+    "version_id": "existing:TYMM-2024-TR",
+    "grade_id": "a5fb7d29-464a-5681-85fe-fe8e8011abba",
+    "batch_id": "6aa76f56-88ac-561a-a108-83d3fb27e07f"
+  }
+}

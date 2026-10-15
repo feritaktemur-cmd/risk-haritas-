@@ -1,0 +1,26 @@
+{
+  "validator_version": "bep-tr-seed-1.0",
+  "source_file": "havuz.csv",
+  "full_file_sha256": "13e5fb18bd6062b06f1e67818c50b7dd32747144d14ed98eb0f6804063d2c000",
+  "full_file_rows": 3004,
+  "grade": 2,
+  "existing_version": true,
+  "subset_sha256": "fa7502e42c4ec51eddfad2b765257c78e76157eca1d853d81e28fa6c68cf0fa2",
+  "errors": [],
+  "warnings": [
+    "T.D.2.2: temalar arasında farklı kazanım metni (karar gerektirir; aynen korunur)",
+    "T.D.2.3: temalar arasında farklı kazanım metni (karar gerektirir; aynen korunur)",
+    "T.O.2.2: temalar arasında farklı kazanım metni (karar gerektirir; aynen korunur)"
+  ],
+  "expected_counts": {
+    "rows": 266,
+    "themes": 8,
+    "theme_outcomes": 108,
+    "theme_components": 266,
+    "source_documents": 8,
+    "warning_rows": 55,
+    "version_id": "existing:TYMM-2024-TR",
+    "grade_id": "b880b021-c776-5a7d-a542-8f2c74f92604",
+    "batch_id": "dce3a52d-0b3d-5e7d-aa0d-017b7c840007"
+  }
+}

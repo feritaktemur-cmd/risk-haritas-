@@ -1,0 +1,22 @@
+{
+  "validator_version": "bep-tr-seed-1.0",
+  "source_file": "havuz.csv",
+  "full_file_sha256": "13e5fb18bd6062b06f1e67818c50b7dd32747144d14ed98eb0f6804063d2c000",
+  "full_file_rows": 3004,
+  "grade": 4,
+  "existing_version": true,
+  "subset_sha256": "999b52e15f7d7b4fc4ee234d6b34c8378c7caca2b0e264fffc0c2f0209ccdc4e",
+  "errors": [],
+  "warnings": [],
+  "expected_counts": {
+    "rows": 364,
+    "themes": 8,
+    "theme_outcomes": 114,
+    "theme_components": 364,
+    "source_documents": 8,
+    "warning_rows": 0,
+    "version_id": "existing:TYMM-2024-TR",
+    "grade_id": "5c1be980-4099-57e4-8fc9-d0c241c85c5e",
+    "batch_id": "0297140a-f6f6-53dd-b38e-d99f8c13fb58"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "validator_version": "bep-tr-seed-1.0",
+  "source_file": "havuz.csv",
+  "full_file_sha256": "13e5fb18bd6062b06f1e67818c50b7dd32747144d14ed98eb0f6804063d2c000",
+  "full_file_rows": 3004,
+  "grade": 7,
+  "existing_version": true,
+  "subset_sha256": "bdc88e378c4e734957634f28b4ebaabdb3d3fc567302390212f2bf4ce50909ac",
+  "errors": [],
+  "warnings": [
+    "satır 2391: Süreç Bileşeni Metni: görünmez karakter/fazla boşluk",
+    "T.K.7.26: temalar arasında farklı kazanım metni (karar gerektirir; aynen korunur)"
+  ],
+  "expected_counts": {
+    "rows": 434,
+    "themes": 6,
+    "theme_outcomes": 151,
+    "theme_components": 434,
+    "source_documents": 6,
+    "warning_rows": 18,
+    "version_id": "existing:TYMM-2024-TR",
+    "grade_id": "c14f3515-816d-53e5-82bc-c30c129180da",
+    "batch_id": "399aab9b-86e1-58e5-b38a-51d65d8e8cf1"
+  }
+}
