@@ -3,6 +3,10 @@
 -- Mevcut tablolara dokunmaz, veri/seed içermez. V3 REVIEW dosyası temel alınmıştır.
 -- Kanonik kayıtlar ana programdan; tema kayıtları kaynakta yayımlandığı gibi (aynen) saklanır.
 -- Eşleştirme/doğrulama yalnızca kanıtlı karar kaydıyla; yayın sınıf bazındadır.
+-- TEKNİK NOT (C — kaynak dosya bütünlüğü): Bu migration CSV dosyasının kendisini göremez.
+--   İleride geliştirilecek CSV aktarımı, curriculum_import_batches.file_sha256 ve row_count
+--   değerlerini aktarım aracının beyanına değil, gerçek kaynak dosyadan bağımsız olarak hesaplamalı;
+--   import_rows.raw_sha256 her satır için ayrıca hesaplanmalı ve doğrulama raporunda karşılaştırılmalıdır.
 BEGIN;
 
 -- 1. Dersler
@@ -86,6 +90,11 @@ CREATE TABLE public.curriculum_grades (
  status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','in_review','published','retired')),
  import_batch_id uuid,
  published_at timestamptz, retired_at timestamptz, publish_note text,
+ -- Beklenen sayılar yalnızca kanıtlı karar kaydıyla atanır (tahmin edilmez).
+ expected_outcome_count integer CHECK (expected_outcome_count > 0), expected_outcome_count_decision_id uuid,
+ expected_theme_count integer CHECK (expected_theme_count > 0), expected_theme_count_decision_id uuid,
+ CHECK ((expected_outcome_count IS NULL) = (expected_outcome_count_decision_id IS NULL)),
+ CHECK ((expected_theme_count IS NULL) = (expected_theme_count_decision_id IS NULL)),
  FOREIGN KEY (version_id, subject_id) REFERENCES public.curriculum_versions(id, subject_id) ON DELETE RESTRICT,
  FOREIGN KEY (import_batch_id, version_id) REFERENCES public.curriculum_import_batches(id, version_id) ON DELETE RESTRICT,
  UNIQUE (version_id, grade), UNIQUE (id, version_id)
@@ -217,7 +226,9 @@ CREATE TABLE public.curriculum_review_decisions (
  import_row_id uuid REFERENCES public.curriculum_import_rows(id) ON DELETE RESTRICT,
  authority_value text CHECK (authority_value IN ('main_program','theme_sources')),
  decision text NOT NULL CHECK (decision IN ('verify_canonical','map_to_canonical','mark_conflict','exclude',
-   'confirm_no_components','set_component_authority','split_source_row')),
+   'confirm_no_components','set_component_authority','split_source_row',
+   'set_expected_outcome_count','set_expected_theme_count')),
+ expected_count integer CHECK (expected_count > 0),
  target_outcome_id uuid REFERENCES public.curriculum_outcomes(id) ON DELETE RESTRICT,
  target_component_id uuid REFERENCES public.curriculum_components(id) ON DELETE RESTRICT,
  source_document_id uuid NOT NULL,
@@ -229,14 +240,15 @@ CREATE TABLE public.curriculum_review_decisions (
  supersedes_decision_id uuid REFERENCES public.curriculum_review_decisions(id) ON DELETE RESTRICT,
  FOREIGN KEY (source_document_id, version_id) REFERENCES public.curriculum_source_documents(id, version_id) ON DELETE RESTRICT,
  CHECK (num_nonnulls(theme_outcome_id, theme_component_id, outcome_id, component_id, import_row_id)
-        = CASE WHEN decision = 'set_component_authority' THEN 0 ELSE 1 END),
+        = CASE WHEN decision IN ('set_component_authority','set_expected_outcome_count','set_expected_theme_count') THEN 0 ELSE 1 END),
+ CHECK ((decision IN ('set_expected_outcome_count','set_expected_theme_count')) = (expected_count IS NOT NULL)),
  CHECK ((decision = 'set_component_authority') = (grade_id IS NULL)),
  CHECK ((decision = 'set_component_authority') = (authority_value IS NOT NULL)),
  CHECK ((decision = 'map_to_canonical' AND num_nonnulls(target_outcome_id, target_component_id) = 1)
      OR (decision <> 'map_to_canonical' AND target_outcome_id IS NULL AND target_component_id IS NULL)),
  CHECK (decision <> 'split_source_row' OR import_row_id IS NOT NULL),
  UNIQUE (id, theme_outcome_id, target_outcome_id), UNIQUE (id, theme_component_id, target_component_id),
- UNIQUE (id, outcome_id), UNIQUE (id, component_id)
+ UNIQUE (id, outcome_id), UNIQUE (id, component_id), UNIQUE (id, grade_id)
 );
 CREATE UNIQUE INDEX curriculum_decision_supersede_once ON public.curriculum_review_decisions(supersedes_decision_id) WHERE supersedes_decision_id IS NOT NULL;
 
@@ -253,6 +265,10 @@ ALTER TABLE public.curriculum_theme_outcomes ADD CONSTRAINT curriculum_theme_out
  FOREIGN KEY (mapping_decision_id, id, outcome_id) REFERENCES public.curriculum_review_decisions(id, theme_outcome_id, target_outcome_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE public.curriculum_theme_components ADD CONSTRAINT curriculum_theme_component_mapping_fk
  FOREIGN KEY (mapping_decision_id, id, component_id) REFERENCES public.curriculum_review_decisions(id, theme_component_id, target_component_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE public.curriculum_grades ADD CONSTRAINT curriculum_grade_expected_outcome_fk
+ FOREIGN KEY (expected_outcome_count_decision_id, id) REFERENCES public.curriculum_review_decisions(id, grade_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE public.curriculum_grades ADD CONSTRAINT curriculum_grade_expected_theme_fk
+ FOREIGN KEY (expected_theme_count_decision_id, id) REFERENCES public.curriculum_review_decisions(id, grade_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE public.curriculum_theme_components ADD CONSTRAINT curriculum_theme_component_split_fk
  FOREIGN KEY (split_decision_id) REFERENCES public.curriculum_review_decisions(id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
@@ -273,7 +289,12 @@ BEGIN
  END IF;
 
  -- Kanonik kararlar ana program kanıtı ister; bileşen yetkisi tema kaynaklarıysa bileşen doğrulaması tema kaynağı ister.
- IF NEW.decision IN ('map_to_canonical','confirm_no_components','set_component_authority')
+ -- Beklenen kazanım sayısı ana programdan; tema sayısı ana programdan veya aynı sınıfın resmî tema kaynağından.
+ IF NEW.decision = 'set_expected_theme_count' AND NOT (doc_kind = 'main_program' OR EXISTS (
+    SELECT 1 FROM public.curriculum_source_documents d JOIN public.curriculum_grades g ON g.id = NEW.grade_id
+     WHERE d.id = NEW.source_document_id AND d.doc_type IN ('theme_page','theme_pdf') AND d.grade = g.grade)) THEN
+   RAISE EXCEPTION 'Expected theme count requires official grade source'; END IF;
+ IF NEW.decision IN ('map_to_canonical','confirm_no_components','set_component_authority','set_expected_outcome_count')
     OR (NEW.decision = 'verify_canonical' AND NEW.outcome_id IS NOT NULL) THEN
    IF doc_kind <> 'main_program' THEN RAISE EXCEPTION 'Canonical decision requires main program evidence'; END IF;
  END IF;
@@ -343,7 +364,8 @@ BEGIN
       OR EXISTS (SELECT 1 FROM public.curriculum_outcomes o WHERE NEW.supersedes_decision_id IN (o.verification_decision_id, o.component_structure_decision_id))
       OR EXISTS (SELECT 1 FROM public.curriculum_components c WHERE c.verification_decision_id = NEW.supersedes_decision_id)
       OR EXISTS (SELECT 1 FROM public.curriculum_theme_outcomes t WHERE t.mapping_decision_id = NEW.supersedes_decision_id)
-      OR EXISTS (SELECT 1 FROM public.curriculum_theme_components t WHERE NEW.supersedes_decision_id IN (t.mapping_decision_id, t.split_decision_id)) THEN
+      OR EXISTS (SELECT 1 FROM public.curriculum_theme_components t WHERE NEW.supersedes_decision_id IN (t.mapping_decision_id, t.split_decision_id))
+      OR EXISTS (SELECT 1 FROM public.curriculum_grades g WHERE NEW.supersedes_decision_id IN (g.expected_outcome_count_decision_id, g.expected_theme_count_decision_id)) THEN
      RAISE EXCEPTION 'Cannot supersede a decision still referenced by live records'; END IF;
  END IF;
  RETURN NEW;
@@ -567,7 +589,8 @@ LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE version_state text; authority text; errs integer; expected_rows integer; actual_rows integer;
 BEGIN
  IF TG_OP = 'INSERT' THEN
-   IF NEW.status <> 'draft' OR NEW.published_at IS NOT NULL OR NEW.retired_at IS NOT NULL THEN RAISE EXCEPTION 'New grade must be draft'; END IF;
+   IF NEW.status <> 'draft' OR NEW.published_at IS NOT NULL OR NEW.retired_at IS NOT NULL
+      OR NEW.expected_outcome_count IS NOT NULL OR NEW.expected_theme_count IS NOT NULL THEN RAISE EXCEPTION 'New grade must be draft'; END IF;
    IF EXISTS (SELECT 1 FROM public.curriculum_versions WHERE id = NEW.version_id AND status = 'retired') THEN RAISE EXCEPTION 'Version retired'; END IF;
    RETURN NEW;
  END IF;
@@ -584,10 +607,21 @@ BEGIN
    RAISE EXCEPTION 'Invalid grade transition'; END IF;
 
  IF OLD.status = 'published' AND NEW.status = 'retired' THEN
-   IF (NEW.import_batch_id, NEW.publish_note, NEW.published_at) IS DISTINCT FROM (OLD.import_batch_id, OLD.publish_note, OLD.published_at) THEN
+   IF (NEW.import_batch_id, NEW.publish_note, NEW.published_at, NEW.expected_outcome_count, NEW.expected_outcome_count_decision_id, NEW.expected_theme_count, NEW.expected_theme_count_decision_id)
+      IS DISTINCT FROM (OLD.import_batch_id, OLD.publish_note, OLD.published_at, OLD.expected_outcome_count, OLD.expected_outcome_count_decision_id, OLD.expected_theme_count, OLD.expected_theme_count_decision_id) THEN
      RAISE EXCEPTION 'Retirement cannot edit published grade metadata'; END IF;
    NEW.retired_at := now(); RETURN NEW;
  END IF;
+
+ -- Beklenen sayılar: değer, aynı sınıfa ait ve aynı değeri taşıyan doğru türde kararla birebir eşleşmeli.
+ IF NEW.expected_outcome_count IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.curriculum_review_decisions d
+    WHERE d.id = NEW.expected_outcome_count_decision_id AND d.grade_id = NEW.id
+      AND d.decision = 'set_expected_outcome_count' AND d.expected_count = NEW.expected_outcome_count) THEN
+   RAISE EXCEPTION 'Expected outcome count requires matching decision'; END IF;
+ IF NEW.expected_theme_count IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.curriculum_review_decisions d
+    WHERE d.id = NEW.expected_theme_count_decision_id AND d.grade_id = NEW.id
+      AND d.decision = 'set_expected_theme_count' AND d.expected_count = NEW.expected_theme_count) THEN
+   RAISE EXCEPTION 'Expected theme count requires matching decision'; END IF;
 
  IF NEW.status IN ('draft','in_review') THEN
    IF NEW.published_at IS NOT NULL OR NEW.retired_at IS NOT NULL THEN RAISE EXCEPTION 'Publication timestamps are system-managed'; END IF;
@@ -634,6 +668,32 @@ BEGIN
  IF EXISTS (SELECT 1 FROM public.curriculum_theme_components c JOIN public.curriculum_theme_outcomes o ON o.id = c.theme_outcome_id
     WHERE o.grade_id = NEW.id AND c.mapping_status NOT IN ('verified','excluded')) THEN
    RAISE EXCEPTION 'Unresolved theme components'; END IF;
+ -- A: partide sınıfı/teması belirsiz satır olmamalı; sınıfa ait en az bir satır bulunmalı ve hiçbiri işlenmeden kalmamalı
+ IF EXISTS (SELECT 1 FROM public.curriculum_import_rows r WHERE r.batch_id = NEW.import_batch_id AND (r.grade IS NULL OR r.theme_no IS NULL)) THEN
+   RAISE EXCEPTION 'Import batch has rows without grade/theme'; END IF;
+ IF NOT EXISTS (SELECT 1 FROM public.curriculum_import_rows r WHERE r.batch_id = NEW.import_batch_id AND r.grade = NEW.grade) THEN
+   RAISE EXCEPTION 'Import batch has no rows for this grade'; END IF;
+ -- B: tüm tema kayıtları yayın için seçilen aynı partiden gelmeli
+ IF EXISTS (SELECT 1 FROM public.curriculum_theme_outcomes t JOIN public.curriculum_import_rows r ON r.id = t.import_row_id
+    WHERE t.grade_id = NEW.id AND r.batch_id <> NEW.import_batch_id)
+    OR EXISTS (SELECT 1 FROM public.curriculum_theme_components c
+    JOIN public.curriculum_theme_outcomes t ON t.id = c.theme_outcome_id
+    JOIN public.curriculum_import_rows r ON r.id = c.import_row_id
+    WHERE t.grade_id = NEW.id AND r.batch_id <> NEW.import_batch_id) THEN
+   RAISE EXCEPTION 'Theme records from a different import batch'; END IF;
+ -- A (devam): hiçbir ham satır işlenmeden kalmamalı
+ IF EXISTS (SELECT 1 FROM public.curriculum_import_rows r
+    WHERE r.batch_id = NEW.import_batch_id AND r.grade = NEW.grade
+      AND NOT EXISTS (SELECT 1 FROM public.curriculum_theme_components c WHERE c.import_row_id = r.id)
+      AND NOT (r.published_label IS NULL AND EXISTS (SELECT 1 FROM public.curriculum_theme_outcomes t WHERE t.import_row_id = r.id))) THEN
+   RAISE EXCEPTION 'Unprocessed import rows for this grade'; END IF;
+ -- D: beklenen sayılar zorunlu ve gerçek sayılarla birebir uyumlu olmalı
+ IF NEW.expected_outcome_count IS NULL OR NEW.expected_theme_count IS NULL THEN
+   RAISE EXCEPTION 'Expected outcome/theme counts not set'; END IF;
+ IF (SELECT count(*) FROM public.curriculum_outcomes WHERE grade_id = NEW.id) <> NEW.expected_outcome_count THEN
+   RAISE EXCEPTION 'Outcome count does not match expected count'; END IF;
+ IF (SELECT count(*) FROM public.curriculum_themes WHERE grade_id = NEW.id) <> NEW.expected_theme_count THEN
+   RAISE EXCEPTION 'Theme count does not match expected count'; END IF;
  NEW.published_at := now();
  NEW.retired_at := NULL;
  RETURN NEW;
