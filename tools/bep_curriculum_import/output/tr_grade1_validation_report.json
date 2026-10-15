@@ -1,0 +1,23 @@
+{
+  "validator_version": "bep-tr-seed-1.0",
+  "source_file": "PDRPUSULA_Turkce_1_8_Yayin_Oncesi_Kararli_Havuz (1).csv",
+  "full_file_sha256": "82f5bd8aca0b8dba5ed006dacbd6b009dae55c8e895378a3a335b2fbb3825b6d",
+  "full_file_rows": 3001,
+  "grade": 1,
+  "subset_sha256": "f26f01e1f1cdff658f87f4ee60d6879ef8c37893e1e4a0b40a3dd6df7b4bcf1e",
+  "errors": [],
+  "warnings": [
+    "T.D.1.3: temalar arasında farklı kazanım metni (karar gerektirir; aynen korunur)"
+  ],
+  "expected_counts": {
+    "rows": 285,
+    "themes": 8,
+    "theme_outcomes": 96,
+    "theme_components": 285,
+    "source_documents": 8,
+    "warning_rows": 16,
+    "version_id": "9c384855-0c04-54ae-969f-17d7041700a3",
+    "grade_id": "025989c6-a0d2-5031-8294-f9655eeaf711",
+    "batch_id": "41a13224-a05a-5e60-bc5c-ce580d5c1333"
+  }
+}
