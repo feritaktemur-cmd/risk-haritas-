@@ -217,3 +217,5 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - İzole PostgreSQL 15 (repo 001–032 + 033): 94/94 test geçti; PG kaldırıldı. Test betiği: /root/dnatest/tests.py.
 - v5 canlıda çalışmazdı: districts.id smallint (v5 uuid).
 - Bekleyen: kullanıcı onayı ile canlıya uygulama; 034 katalog seed; backend/arayüz (başlatılmadı). 033 artık DNA'nın; BEP kayıt şeması sonraki boş numarayı alacak.
+- 2026-06: 033 kullanıcı tarafından canlıya UYGULANDI (12 tablo doğrulandı).
+- 2026-06: 034_dna_catalog_seed.sql HAZIR, UYGULANMADI. Kaynak k.json (sha256 888b85ed…). 1 katalog, 7 boyut, 51 madde; 52. madde open_text_prompt. Pasif ekle → doğrula (sayı, aralık, md5 parmak izi) → aktifleştir. İzole PG15'te doğrulandı (tekrar çalıştırma ve metin değişikliği reddediliyor). Üretici: /root/dnatest/gen034.py.
