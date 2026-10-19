@@ -195,3 +195,11 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - 184 `warning` ham satırı (sınıf 1: 16, 2: 55, 3: 20, 5: 75, 7: 18; 4, 6, 8: 0). Uyarı türleri: temalar arası farklı kazanım metni, görünmez karakter/fazla boşluk. Karar bekliyor.
 - `curriculum_grades.import_batch_id` 8 sınıfın tamamında NULL (bağ ham satırlar üzerinden). Yayın öncesi doldurulup doldurulmayacağı kararlaştırılacak.
 - Bekleyen sonraki adımlar (başlatılmadı): kanonik kaynak PDF kanıtları + eşleştirme/yayın (Aşama 2), 033_bep_records.sql, BEP RPC fonksiyonları, öğretmen arayüzü.
+
+## BEP MODÜLÜ DURUMU: ASKIYA ALINDI (2026-06)
+- Yeni bir karar alınana kadar BEP'te yeni geliştirme, migration veya veri aktarımı yapılmaz.
+- Mevcut yapı aynen korunur: 032 migration, 13 curriculum_* tablosu ve Supabase'deki TYMM-2024-TR verisi (`draft`), /app/tools/bep_curriculum_import araçları ve çıktıları. Silme, geri alma veya yapı değişikliği yapılmaz.
+- BEKLEMEDE: Migration 033 (bep_records), kazanım havuzu eşleştirme/yayın aktarımı (Aşama 2), BEP RPC fonksiyonları, öğretmen arayüzü, 184 uyarı satırı ve import_batch_id kararları.
+
+## GÜNCEL GELİŞTİRME ÖNCELİĞİ (2026-06)
+- P0: Öğrenci Yönetimi bölümünün Okul Risk Haritası modülünden ayrılması. (Henüz başlatılmadı; kapsam ve plan kullanıcı onayıyla belirlenecek.)
