@@ -210,3 +210,10 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
   * SchoolHome.jsx: sınıf/öğrenci kartları kaldırıldı, başlık "Risk Haritası", 4 risk kartı korundu.
   * SchoolRibaNew.jsx: sınıf yok mesajına yeni Sınıf Tanımları bağlantısı.
   * Backend, API, tablolar, RLS değişmedi. Test: mock oturum + mock API ile gezinme testleri; gerçek okul hesabıyla uçtan uca test BEKLİYOR (test hesabı yok).
+
+## 2026-06 — DNA Modülü / Migration 033 (HAZIR, UYGULANMADI)
+- Dosya: /app/supabase/migrations/033_dna_foundation.sql (sha256 d3b578cd…37b9). Kaynak: kullanıcı taslağı v5 (sha256 dcaa8642…).
+- 12 dna_* tablosu, tetikleyiciler, RLS (politika yok), service_role yalnızca SELECT; yazma yalnızca 6 SECURITY DEFINER RPC ile: dna_create_application, dna_activate_application, dna_close_application, dna_submit_response, dna_invalidate_response, dna_submit_to_ram. Hata kodları DN403/404/409/422.
+- İzole PostgreSQL 15 (repo 001–032 + 033): 94/94 test geçti; PG kaldırıldı. Test betiği: /root/dnatest/tests.py.
+- v5 canlıda çalışmazdı: districts.id smallint (v5 uuid).
+- Bekleyen: kullanıcı onayı ile canlıya uygulama; 034 katalog seed; backend/arayüz (başlatılmadı). 033 artık DNA'nın; BEP kayıt şeması sonraki boş numarayı alacak.
