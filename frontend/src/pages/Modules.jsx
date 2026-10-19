@@ -99,7 +99,9 @@ export default function Modules({ variant = "school" }) {
             <span className="grid h-12 w-12 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
               <BarChart3 size={24} />
             </span>
-            <span className="mt-4 block text-base font-bold text-white">Risk Haritası</span>
+            <span className="mt-4 block text-base font-bold text-white" data-testid="module-risk-map-title">
+              {variant === "school" ? "Okul Risk Haritası" : "Risk Haritası"}
+            </span>
             <span className="mt-2 block text-sm text-slate-400">
               Öğrenci risk verilerinin girilmesi, sınıf ve okul risk haritalarının oluşturulması ve RAM düzeyinde analiz edilmesi.
             </span>

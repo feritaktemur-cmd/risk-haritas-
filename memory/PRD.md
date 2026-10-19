@@ -205,7 +205,7 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - P0: Öğrenci Yönetimi bölümünün Okul Risk Haritası modülünden ayrılması — UYGULANDI (yalnızca frontend, 2026-06).
   * Yeni: pages/StudentManagementHome.jsx (/school/student-management; okul adı+ilçe via GET /school/panel; Sınıf Tanımları + Öğrenciler kartları).
   * App.js: /school/student-management, /classes, /students rotaları; eski /school/classes ve /school/students → Navigate ile yeni adreslere.
-  * Modules.jsx: okul görünümünde "Öğrenci Yönetimi" kartı ilk sırada (admin görünümü değişmedi).
+  * Modules.jsx: okul görünümünde "Öğrenci Yönetimi" kartı ilk sırada; risk kartı başlığı okul görünümünde "Okul Risk Haritası" (admin görünümünde "Risk Haritası" olarak kaldı).
   * SchoolClasses/SchoolStudents: geri düğmesi → /school/student-management, metin "Öğrenci Yönetimine Dön".
   * SchoolHome.jsx: sınıf/öğrenci kartları kaldırıldı, başlık "Risk Haritası", 4 risk kartı korundu.
   * SchoolRibaNew.jsx: sınıf yok mesajına yeni Sınıf Tanımları bağlantısı.
