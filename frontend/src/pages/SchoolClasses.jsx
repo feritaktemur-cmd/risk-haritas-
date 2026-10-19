@@ -118,11 +118,11 @@ export default function SchoolClasses() {
             </div>
           </div>
           <button
-            onClick={() => navigate("/school")}
+            onClick={() => navigate("/school/student-management")}
             data-testid="classes-back-btn"
             className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2 text-sm font-semibold text-slate-200 ring-1 ring-white/10 transition hover:bg-white/[0.1]"
           >
-            <ArrowLeft size={15} /> Okul Paneli
+            <ArrowLeft size={15} /> Öğrenci Yönetimine Dön
           </button>
         </div>
       </header>

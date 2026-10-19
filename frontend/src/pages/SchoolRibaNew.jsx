@@ -208,7 +208,16 @@ export default function SchoolRibaNew() {
                   data-testid="riba-new-no-classes"
                   className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-6 text-center text-sm text-slate-400"
                 >
-                  Henüz sınıf tanımlanmamış. Önce Sınıf Tanımları ekranından sınıf ekleyiniz.
+                  Henüz sınıf tanımlanmamış. Önce{" "}
+                  <button
+                    type="button"
+                    onClick={() => navigate("/school/student-management/classes")}
+                    data-testid="riba-new-classes-link"
+                    className="font-semibold text-emerald-300 underline-offset-2 hover:underline"
+                  >
+                    Öğrenci Yönetimi › Sınıf Tanımları
+                  </button>{" "}
+                  ekranından sınıf ekleyiniz.
                 </p>
               ) : (
                 <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4" data-testid="riba-new-class-grid">

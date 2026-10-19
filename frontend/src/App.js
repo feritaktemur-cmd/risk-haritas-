@@ -29,6 +29,7 @@ import SchoolChangePassword from "./pages/SchoolChangePassword";
 import SchoolHome from "./pages/SchoolHome";
 import SchoolClasses from "./pages/SchoolClasses";
 import SchoolStudents from "./pages/SchoolStudents";
+import StudentManagementHome from "./pages/StudentManagementHome";
 import RiskEntry from "./pages/RiskEntry";
 import ClassRiskMap from "./pages/ClassRiskMap";
 import SchoolRiskMap from "./pages/SchoolRiskMap";
@@ -113,8 +114,11 @@ export default function App() {
         <Route path="/school/change-password" element={<SchoolChangePassword />} />
         <Route path="/school" element={<SchoolHome />} />
         <Route path="/school/modules" element={<Modules variant="school" />} />
-        <Route path="/school/classes" element={<SchoolClasses />} />
-        <Route path="/school/students" element={<SchoolStudents />} />
+        <Route path="/school/student-management" element={<StudentManagementHome />} />
+        <Route path="/school/student-management/classes" element={<SchoolClasses />} />
+        <Route path="/school/student-management/students" element={<SchoolStudents />} />
+        <Route path="/school/classes" element={<Navigate to="/school/student-management/classes" replace />} />
+        <Route path="/school/students" element={<Navigate to="/school/student-management/students" replace />} />
         <Route path="/school/risk-entry" element={<RiskEntry />} />
         <Route path="/school/risk-map" element={<ClassRiskMap />} />
         <Route path="/school/risk-map/school" element={<SchoolRiskMap />} />

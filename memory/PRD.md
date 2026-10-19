@@ -202,4 +202,11 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - BEKLEMEDE: Migration 033 (bep_records), kazanım havuzu eşleştirme/yayın aktarımı (Aşama 2), BEP RPC fonksiyonları, öğretmen arayüzü, 184 uyarı satırı ve import_batch_id kararları.
 
 ## GÜNCEL GELİŞTİRME ÖNCELİĞİ (2026-06)
-- P0: Öğrenci Yönetimi bölümünün Okul Risk Haritası modülünden ayrılması. (Henüz başlatılmadı; kapsam ve plan kullanıcı onayıyla belirlenecek.)
+- P0: Öğrenci Yönetimi bölümünün Okul Risk Haritası modülünden ayrılması — UYGULANDI (yalnızca frontend, 2026-06).
+  * Yeni: pages/StudentManagementHome.jsx (/school/student-management; okul adı+ilçe via GET /school/panel; Sınıf Tanımları + Öğrenciler kartları).
+  * App.js: /school/student-management, /classes, /students rotaları; eski /school/classes ve /school/students → Navigate ile yeni adreslere.
+  * Modules.jsx: okul görünümünde "Öğrenci Yönetimi" kartı ilk sırada (admin görünümü değişmedi).
+  * SchoolClasses/SchoolStudents: geri düğmesi → /school/student-management, metin "Öğrenci Yönetimine Dön".
+  * SchoolHome.jsx: sınıf/öğrenci kartları kaldırıldı, başlık "Risk Haritası", 4 risk kartı korundu.
+  * SchoolRibaNew.jsx: sınıf yok mesajına yeni Sınıf Tanımları bağlantısı.
+  * Backend, API, tablolar, RLS değişmedi. Test: mock oturum + mock API ile gezinme testleri; gerçek okul hesabıyla uçtan uca test BEKLİYOR (test hesabı yok).

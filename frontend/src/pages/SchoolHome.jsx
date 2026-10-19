@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { School, Loader2, LogOut, MapPin, LayoutGrid, Users, ShieldAlert, BarChart3, Building2, PieChart } from "lucide-react";
+import { School, Loader2, LogOut, MapPin, ShieldAlert, BarChart3, Building2, PieChart } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -66,7 +66,7 @@ export default function SchoolHome() {
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-[0.18em] text-emerald-300/80">PDRPUSULA</p>
-              <h1 className="text-lg font-extrabold text-white" data-testid="school-panel-title">Okul Paneli</h1>
+              <h1 className="text-lg font-extrabold text-white" data-testid="school-panel-title">Risk Haritası</h1>
             </div>
           </div>
           <button
@@ -89,34 +89,6 @@ export default function SchoolHome() {
         </div>
 
         <div className="mt-6 grid max-w-2xl gap-4">
-          <button
-            onClick={() => navigate("/school/classes")}
-            data-testid="nav-classes"
-            className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-4 text-left transition hover:border-emerald-400/40 hover:bg-white/[0.06]"
-          >
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
-              <LayoutGrid size={20} />
-            </span>
-            <span>
-              <span className="block text-sm font-bold text-white">Sınıf Tanımları</span>
-              <span className="block text-xs text-slate-400">Sınıf/şube tanımlarını görüntüle ve ekle</span>
-            </span>
-          </button>
-
-          <button
-            onClick={() => navigate("/school/students")}
-            data-testid="nav-students"
-            className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-4 text-left transition hover:border-indigo-400/40 hover:bg-white/[0.06]"
-          >
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-500/15 text-indigo-300">
-              <Users size={20} />
-            </span>
-            <span>
-              <span className="block text-sm font-bold text-white">Öğrenciler</span>
-              <span className="block text-xs text-slate-400">Öğrenci listesini görüntüle ve öğrenci ekle</span>
-            </span>
-          </button>
-
           <button
             onClick={() => navigate("/school/risk-entry")}
             data-testid="nav-risk-entry"
