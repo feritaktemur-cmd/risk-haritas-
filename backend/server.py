@@ -6066,6 +6066,148 @@ async def school_dna_share_link(application_id: str, request: Request):
     return {"token": token}
 
 
+# ---------------------------------------------------------------------------
+# DNA Aşama 3: herkese açık öğrenci formu (yetki yalnızca bağlantıdaki token)
+# ---------------------------------------------------------------------------
+_DNA_TOKEN_RE = _re.compile(r"^[A-Za-z0-9_-]{43}$")
+_DNA_LINK_INVALID = "Bu anket bağlantısı geçerli değil veya uygulama kapatılmış."
+_DNA_RATE_WINDOW = 600
+_DNA_RATE_MAX = 30
+_dna_rate_hits = {}
+
+_DNA_SUBMIT_ERRORS = {
+    "dna_link_invalid": (404, _DNA_LINK_INVALID),
+    "dna_application_not_open": (404, _DNA_LINK_INVALID),
+    "dna_invalid_class": (422, "Lütfen listeden sınıfınızı seçiniz."),
+    "dna_invalid_identity": (422, "Ad, soyad ve okul numarası alanlarını doğru doldurunuz."),
+    "dna_open_text_too_long": (422, "Son soruya en fazla 2000 karakter yazabilirsiniz."),
+    "dna_invalid_answers": (422, "Lütfen 51 sorunun tamamını yanıtlayınız."),
+    "dna_duplicate_response": (409, "Bu sınıf ve okul numarasıyla bu ankete daha önce yanıt gönderilmiş."),
+}
+
+
+def _dna_resolve_public_link(client, token: str):
+    """token -> (application row) for an ACTIVE link of an ACTIVE application, else 404."""
+    if not _DNA_TOKEN_RE.match(token or ""):
+        raise HTTPException(status_code=404, detail=_DNA_LINK_INVALID)
+    links = (
+        client.table("dna_access_links").select("application_id,is_active")
+        .eq("token_hash", hash_dna_token(token)).limit(1).execute().data
+    )
+    if not links or not links[0].get("is_active"):
+        raise HTTPException(status_code=404, detail=_DNA_LINK_INVALID)
+    apps = (
+        client.table("dna_applications").select("id,school_id,academic_year_id,catalog_id,name,status")
+        .eq("id", links[0]["application_id"]).limit(1).execute().data
+    )
+    if not apps or apps[0]["status"] != "active":
+        raise HTTPException(status_code=404, detail=_DNA_LINK_INVALID)
+    return apps[0]
+
+
+def _dna_rate_limited(request: Request, token: str) -> bool:
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = fwd.split(",")[0].strip() or (request.client.host if request.client else "?")
+    key = (ip, hash_dna_token(token))
+    now = datetime.now(timezone.utc).timestamp()
+    hits = [t for t in _dna_rate_hits.get(key, []) if now - t < _DNA_RATE_WINDOW]
+    if len(hits) >= _DNA_RATE_MAX:
+        _dna_rate_hits[key] = hits
+        return True
+    hits.append(now)
+    _dna_rate_hits[key] = hits
+    if len(_dna_rate_hits) > 5000:
+        for k in [k for k, v in _dna_rate_hits.items() if not v or now - v[-1] >= _DNA_RATE_WINDOW]:
+            _dna_rate_hits.pop(k, None)
+    return False
+
+
+@api.get("/dna/respond/{token}")
+async def dna_public_form(token: str):
+    """PUBLIC read-only DNA form. Exposes no ids of school/application, no hashes."""
+    client = get_service_client()
+    app = _dna_resolve_public_link(client, token)
+    school = client.table("schools").select("name").eq("id", app["school_id"]).limit(1).execute().data
+    year = client.table("academic_years").select("name").eq("id", app["academic_year_id"]).limit(1).execute().data
+    catalog = (
+        client.table("dna_catalogs").select("open_text_prompt,open_text_max_length")
+        .eq("id", app["catalog_id"]).limit(1).execute().data
+    )
+    items = (
+        client.table("dna_items").select("item_no,text").eq("catalog_id", app["catalog_id"])
+        .order("item_no").execute().data
+    )
+    ac_rows = (
+        client.table("dna_application_classes")
+        .select("school_class:school_classes(id,level,branch,school_id)")
+        .eq("application_id", app["id"]).execute().data
+    )
+    classes = sorted(
+        [r["school_class"] for r in ac_rows if (r.get("school_class") or {}).get("school_id") == app["school_id"]],
+        key=lambda c: (c["level"], c["branch"]),
+    )
+    if not catalog or len(items) != 51 or not classes:
+        raise HTTPException(status_code=404, detail=_DNA_LINK_INVALID)
+    return {
+        "school_name": school[0]["name"] if school else None,
+        "academic_year": year[0]["name"] if year else None,
+        "application_name": app["name"],
+        "classes": [{"id": c["id"], "level": c["level"], "branch": c["branch"]} for c in classes],
+        "items": [{"item_no": i["item_no"], "text": i["text"]} for i in items],
+        "open_text_prompt": catalog[0]["open_text_prompt"],
+        "open_text_max_length": catalog[0]["open_text_max_length"],
+        "answer_options": [{"value": 2, "label": "Evet"}, {"value": 1, "label": "Bazen"}, {"value": 0, "label": "Hayır"}],
+    }
+
+
+@api.post("/dna/respond/{token}")
+async def dna_public_submit(token: str, request: Request):
+    """PUBLIC submit via atomic dna_submit_response RPC. Logs never contain personal data."""
+    if not _DNA_TOKEN_RE.match(token or ""):
+        raise HTTPException(status_code=404, detail=_DNA_LINK_INVALID)
+    if _dna_rate_limited(request, token):
+        raise HTTPException(status_code=429, detail="Çok fazla deneme yapıldı. Lütfen birkaç dakika sonra tekrar deneyiniz.")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="Geçersiz istek.")
+    fields = {k: body.get(k) for k in ("first_name", "last_name", "student_number")}
+    if not all(isinstance(v, str) and v.strip() for v in fields.values()) \
+            or len(fields["first_name"].strip()) > 60 or len(fields["last_name"].strip()) > 60 \
+            or len(fields["student_number"].strip()) > 20:
+        raise HTTPException(status_code=422, detail=_DNA_SUBMIT_ERRORS["dna_invalid_identity"][1])
+    class_id = body.get("school_class_id")
+    if not isinstance(class_id, str) or not _DNA_UUID_RE.match(class_id):
+        raise HTTPException(status_code=422, detail=_DNA_SUBMIT_ERRORS["dna_invalid_class"][1])
+    answers = body.get("answers")
+    if not isinstance(answers, dict) or set(answers) != {str(n) for n in range(1, 52)} \
+            or not all(type(v) is int and v in (0, 1, 2) for v in answers.values()):
+        raise HTTPException(status_code=422, detail=_DNA_SUBMIT_ERRORS["dna_invalid_answers"][1])
+    open_text = body.get("open_text")
+    if open_text is not None and not isinstance(open_text, str):
+        raise HTTPException(status_code=422, detail="Geçersiz istek.")
+    if isinstance(open_text, str) and len(open_text.strip()) > 2000:
+        raise HTTPException(status_code=422, detail=_DNA_SUBMIT_ERRORS["dna_open_text_too_long"][1])
+    client = get_service_client()
+    try:
+        client.rpc(
+            "dna_submit_response",
+            {"p_token_hash": hash_dna_token(token), "p_school_class_id": class_id,
+             "p_first_name": fields["first_name"], "p_last_name": fields["last_name"],
+             "p_student_number": fields["student_number"], "p_answers": answers,
+             "p_open_text": open_text},
+        ).execute()
+    except Exception as err:  # noqa: BLE001
+        mapped = _DNA_SUBMIT_ERRORS.get(getattr(err, "message", None))
+        if mapped:
+            raise HTTPException(status_code=mapped[0], detail=mapped[1])
+        logger.error("dna_submit_response failed: code=%s", getattr(err, "code", None))
+        raise HTTPException(status_code=500, detail="Yanıtınız kaydedilemedi. Lütfen tekrar deneyiniz.")
+    return {"ok": True}
+
+
 app.include_router(api)
 
 app.add_middleware(

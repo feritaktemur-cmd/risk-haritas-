@@ -233,3 +233,9 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Frontend: components/DnaActivateButton.jsx (onaylı başlatma), components/DnaShareCard.jsx (bağlantı, QR, kopyala, cihaz paylaşımı), SchoolDna.jsx satırlara bağlandı. Bağlantı: {origin}/dna/respond/{token}.
 - Test: sahte istemci 25/25 (/root/dnatest/test_dna_stage2.py) + Aşama 1 22/22; Playwright sahte oturumla başlatma/QR/kopyalama/yenileme geçti; canlı uç noktalar oturumsuz 401. Canlı "deneme" taslağı draft, erişim bağlantısı yok (salt-okunur kontrol).
 - Bilinen eksik: /dna/respond/:token öğrenci formu henüz yok (Aşama 3) — bağlantı şu an boş sayfa açar.
+
+## 2026-06 — DNA Aşama 3: Herkese açık öğrenci formu (TAMAMLANDI)
+- server.py: GET /api/dna/respond/{token} (okul adı, yıl, uygulamanın sınıfları, 51 madde, 52. açık uçlu soru; kimlik/hash yok), POST /api/dna/respond/{token} → RPC dna_submit_response (yalnızca URL token'ının hash'i). Girdi doğrulama (51 cevap, 0/1/2 tam sayı, ad/soyad ≤60, numara ≤20, açık metin ≤2000), IP+bağlantı başına 10 dk'da 30 deneme sınırı (bellekte), tekrar yanıt 409, kapalı/geçersiz bağlantı 404. Loglarda kişisel veri yok.
+- Frontend: pages/DnaRespond.jsx (/dna/respond/:token), components/DnaQuestion.jsx (Evet/Bazen/Hayır). Kısa kişisel veri bilgilendirmesi (onay kutusu YOK — kullanıcı tercihi), ilerleme sayacı, eksik soruların işaretlenmesi, teşekkür ekranı.
+- Test (canlıya yanıt yazılmadı): sahte istemci 34/34 (/root/dnatest/test_dna_stage3.py) + önceki 25/25, 22/22; Playwright sahte API ile form akışı geçti; canlı bilinmeyen token GET 404.
+- Bilinen sınır: gönderim sınırı bellekte tutulur (yeniden başlatmada sıfırlanır; birden çok sunucuda ortak değil).
