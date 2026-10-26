@@ -21,6 +21,8 @@ from excel_preview import analyze_rows, load_reference, plan_import, VALID_MANAG
 from students_excel import analyze_student_rows
 from admin_accounts import generate_username, generate_temp_password, synth_email_for
 from riba_link_token import generate_link_token, hash_link_token, RibaLinkTokenError
+from dna_link_token import generate_dna_token, hash_dna_token, DnaLinkTokenError
+import hmac
 from riba_calc import (
     build_target_frequencies,
     compute_class_target_results,
@@ -5986,6 +5988,82 @@ async def school_dna_create_application(request: Request):
         logger.error("dna_create_application failed: code=%s", getattr(err, "code", None))
         raise HTTPException(status_code=500, detail="DNA uygulaması oluşturulamadı. Lütfen tekrar deneyiniz.")
     return {"id": app_id, "status": "draft"}
+
+
+_DNA_LIFECYCLE_ERRORS = {
+    "dna_application_not_found": (404, "DNA uygulaması bulunamadı."),
+    "dna_application_not_draft": (409, "Yalnızca taslak durumundaki uygulamalar başlatılabilir."),
+    "dna_application_has_no_classes": (409, "Uygulamada en az bir sınıf bulunmalıdır."),
+    "dna_account_not_authorized": (403, "Bu işlem için yetkiniz bulunmuyor."),
+}
+
+
+def _dna_require_app_id(application_id: str):
+    if not _DNA_UUID_RE.match(application_id or ""):
+        raise HTTPException(status_code=404, detail="DNA uygulaması bulunamadı.")
+
+
+@api.post("/school/dna/applications/{application_id}/activate")
+async def school_dna_activate_application(application_id: str, request: Request):
+    """Activate the school's own DRAFT DNA application via dna_activate_application RPC.
+
+    The raw share token is never stored; only its SHA-256 hash is passed to the RPC.
+    """
+    _uid, acc = _require_school_ready(request)
+    _dna_require_app_id(application_id)
+    try:
+        token_hash = hash_dna_token(generate_dna_token(application_id, 1))
+    except DnaLinkTokenError:
+        logger.error("dna activate: link secret missing")
+        raise HTTPException(status_code=503, detail="Paylaşım bağlantısı şu anda üretilemiyor. Lütfen RAM ile iletişime geçiniz.")
+    client = get_service_client()
+    try:
+        client.rpc(
+            "dna_activate_application",
+            {"p_application_id": application_id, "p_school_id": acc["school_id"],
+             "p_account_id": acc["id"], "p_token_hash": token_hash},
+        ).execute()
+    except Exception as err:  # noqa: BLE001
+        mapped = _DNA_LIFECYCLE_ERRORS.get(getattr(err, "message", None))
+        if mapped:
+            raise HTTPException(status_code=mapped[0], detail=mapped[1])
+        logger.error("dna_activate_application failed: code=%s", getattr(err, "code", None))
+        raise HTTPException(status_code=500, detail="Uygulama başlatılamadı. Lütfen tekrar deneyiniz.")
+    return {"id": application_id, "status": "active"}
+
+
+@api.get("/school/dna/applications/{application_id}/share")
+async def school_dna_share_link(application_id: str, request: Request):
+    """Return the share token of the school's own ACTIVE DNA application.
+
+    Token is re-derived (HMAC) and verified against the stored hash; never read from DB.
+    """
+    _uid, acc = _require_school_ready(request)
+    _dna_require_app_id(application_id)
+    client = get_service_client()
+    apps = (
+        client.table("dna_applications").select("id,status")
+        .eq("id", application_id).eq("school_id", acc["school_id"]).limit(1).execute().data
+    )
+    if not apps:
+        raise HTTPException(status_code=404, detail="DNA uygulaması bulunamadı.")
+    if apps[0]["status"] != "active":
+        raise HTTPException(status_code=409, detail="Paylaşım bağlantısı yalnızca aktif uygulamalar için gösterilir.")
+    links = (
+        client.table("dna_access_links").select("token_hash,link_version,is_active")
+        .eq("application_id", application_id).limit(1).execute().data
+    )
+    link = links[0] if links else None
+    if not link or not link.get("is_active"):
+        raise HTTPException(status_code=409, detail="Bu uygulamanın aktif bir paylaşım bağlantısı yok.")
+    try:
+        token = generate_dna_token(application_id, int(link["link_version"]))
+    except DnaLinkTokenError:
+        raise HTTPException(status_code=503, detail="Paylaşım bağlantısı şu anda üretilemiyor. Lütfen RAM ile iletişime geçiniz.")
+    if not hmac.compare_digest(hash_dna_token(token), link["token_hash"]):
+        logger.error("dna share: token hash mismatch for application")
+        raise HTTPException(status_code=409, detail="Paylaşım bağlantısı doğrulanamadı. Lütfen RAM ile iletişime geçiniz.")
+    return {"token": token}
 
 
 app.include_router(api)

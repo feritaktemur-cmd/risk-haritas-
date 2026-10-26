@@ -4,6 +4,8 @@ import axios from "axios";
 import { Loader2, CalendarX2, ArrowLeft, Plus, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
+import { DnaShareCard } from "../components/DnaShareCard";
+import { DnaActivateButton } from "../components/DnaActivateButton";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -30,12 +32,15 @@ function StatusBadge({ status, testId }) {
   );
 }
 
-function ApplicationRow({ app }) {
+function ApplicationRow({ app, getHeaders, onChanged }) {
   return (
     <li data-testid={`dna-app-${app.id}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-base font-bold text-white" data-testid={`dna-app-name-${app.id}`}>{app.name}</p>
-        <StatusBadge status={app.status} testId={`dna-app-status-${app.id}`} />
+        <div className="flex items-center gap-2">
+          {app.status === "draft" && <DnaActivateButton app={app} getHeaders={getHeaders} onActivated={onChanged} />}
+          <StatusBadge status={app.status} testId={`dna-app-status-${app.id}`} />
+        </div>
       </div>
       <p className="mt-2 text-xs text-slate-400">
         {app.academic_year || "—"} · Oluşturma: {fmtDate(app.created_at)} · {app.class_count} sınıf
@@ -47,6 +52,7 @@ function ApplicationRow({ app }) {
           </span>
         ))}
       </div>
+      {app.status === "active" && <DnaShareCard appId={app.id} appName={app.name} getHeaders={getHeaders} />}
     </li>
   );
 }
@@ -145,7 +151,7 @@ export default function SchoolDna() {
           ) : (
             <ul className="space-y-3" data-testid="dna-list">
               {apps.map((a) => (
-                <ApplicationRow key={a.id} app={a} />
+                <ApplicationRow key={a.id} app={a} getHeaders={authHeader} onChanged={load} />
               ))}
             </ul>
           )}

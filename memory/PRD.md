@@ -226,3 +226,10 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Frontend: pages/SchoolDna.jsx (/school/dna, liste: Taslak/Aktif/Kapalı), pages/SchoolDnaNew.jsx (/school/dna/new, ad + sınıf seçimi; sınıflar GET /school/students'tan), Modules.jsx'e okul için "DNA" kartı (RİBA'dan sonra), App.js rotaları.
 - Test (canlıya kayıt YAZILMADI): sahte istemcili backend testleri 22/22 (/root/dnatest/test_dna_api.py); canlı RPC yazmasız çağrı DN403, anon RPC/tablo erişimi 42501; Playwright sahte oturum + sahte API ile ekran akışı geçti. Gerçek okul hesabıyla uçtan uca deneme yapılmadı.
 - Sonraki (başlatılmadı): etkinleştirme + bağlantı/QR, herkese açık form, kapatma, geçersiz kılma, sonuçlar/PDF, RAM gönderimi.
+
+## 2026-06 — DNA Aşama 2: Uygulamayı Başlat + Paylaşım Bağlantısı/QR (TAMAMLANDI)
+- backend/dna_link_token.py (yeni): HMAC-SHA256 deterministik token, önek "pdrpusula:dna-link:v1:{app_id}:{link_version}", gizli anahtar RIBA_LINK_SECRET (domain ayrımıyla). Ham token saklanmaz; yalnızca SHA-256 hash.
+- server.py: POST /api/school/dna/applications/{id}/activate → RPC dna_activate_application (okul/hesap oturumdan; hash backend'de üretilir). GET /api/school/dna/applications/{id}/share → yalnızca okulun kendi AKTİF uygulaması; token yeniden üretilir ve kayıtlı hash ile karşılaştırılır.
+- Frontend: components/DnaActivateButton.jsx (onaylı başlatma), components/DnaShareCard.jsx (bağlantı, QR, kopyala, cihaz paylaşımı), SchoolDna.jsx satırlara bağlandı. Bağlantı: {origin}/dna/respond/{token}.
+- Test: sahte istemci 25/25 (/root/dnatest/test_dna_stage2.py) + Aşama 1 22/22; Playwright sahte oturumla başlatma/QR/kopyalama/yenileme geçti; canlı uç noktalar oturumsuz 401. Canlı "deneme" taslağı draft, erişim bağlantısı yok (salt-okunur kontrol).
+- Bilinen eksik: /dna/respond/:token öğrenci formu henüz yok (Aşama 3) — bağlantı şu an boş sayfa açar.
