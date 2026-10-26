@@ -219,3 +219,10 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Bekleyen: kullanıcı onayı ile canlıya uygulama; 034 katalog seed; backend/arayüz (başlatılmadı). 033 artık DNA'nın; BEP kayıt şeması sonraki boş numarayı alacak.
 - 2026-06: 033 kullanıcı tarafından canlıya UYGULANDI (12 tablo doğrulandı).
 - 2026-06: 034_dna_catalog_seed.sql HAZIR, UYGULANMADI. Kaynak k.json (sha256 888b85ed…). 1 katalog, 7 boyut, 51 madde; 52. madde open_text_prompt. Pasif ekle → doğrula (sayı, aralık, md5 parmak izi) → aktifleştir. İzole PG15'te doğrulandı (tekrar çalıştırma ve metin değişikliği reddediliyor). Üretici: /root/dnatest/gen034.py.
+- 2026-06: 034 kullanıcı tarafından canlıya UYGULANDI (katalog aktif, 7 boyut, 51 madde).
+
+## 2026-06 — DNA Aşama 1: Okul Paneli (TAMAMLANDI)
+- Backend (server.py sonu): GET /api/school/dna/applications (token→school_id ile süzülür; ad, durum, yıl, sınıflar), POST /api/school/dna/applications {name, school_class_ids} → RPC dna_create_application (p_school_id/p_account_id yalnızca oturumdan). DN403/409/422 Türkçe mesajlara eşlenir.
+- Frontend: pages/SchoolDna.jsx (/school/dna, liste: Taslak/Aktif/Kapalı), pages/SchoolDnaNew.jsx (/school/dna/new, ad + sınıf seçimi; sınıflar GET /school/students'tan), Modules.jsx'e okul için "DNA" kartı (RİBA'dan sonra), App.js rotaları.
+- Test (canlıya kayıt YAZILMADI): sahte istemcili backend testleri 22/22 (/root/dnatest/test_dna_api.py); canlı RPC yazmasız çağrı DN403, anon RPC/tablo erişimi 42501; Playwright sahte oturum + sahte API ile ekran akışı geçti. Gerçek okul hesabıyla uçtan uca deneme yapılmadı.
+- Sonraki (başlatılmadı): etkinleştirme + bağlantı/QR, herkese açık form, kapatma, geçersiz kılma, sonuçlar/PDF, RAM gönderimi.

@@ -5886,6 +5886,108 @@ async def admin_risk_map_tracking(request: Request, academic_year_id: str = None
     }
 
 
+# ---------------------------------------------------------------------------
+# DNA (Devamsızlık Nedenleri Anketi) — Aşama 1: okul uygulama listesi ve oluşturma
+# ---------------------------------------------------------------------------
+_DNA_UUID_RE = _re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+_DNA_RPC_ERRORS = {
+    "dna_invalid_name": (422, "Uygulama adı 1–200 karakter olmalıdır."),
+    "dna_invalid_classes": (422, "Seçilen sınıflar geçersiz. Lütfen yalnızca okulunuzun sınıflarını seçiniz."),
+    "dna_no_active_academic_year": (409, "Aktif eğitim yılı bulunamadı. Lütfen RAM ile iletişime geçiniz."),
+    "dna_no_active_catalog": (409, "DNA soru kataloğu kullanıma hazır değil. Lütfen RAM ile iletişime geçiniz."),
+    "dna_account_not_authorized": (403, "Bu işlem için yetkiniz bulunmuyor."),
+}
+
+
+@api.get("/school/dna/applications")
+async def school_dna_list_applications(request: Request):
+    """List the logged-in school's own DNA applications (scoped by token->school_id)."""
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    apps = (
+        client.table("dna_applications")
+        .select("id,name,status,academic_year_id,created_at,opened_at,closed_at")
+        .eq("school_id", school_id)
+        .order("created_at", desc=True)
+        .execute()
+        .data
+    )
+    if not apps:
+        return {"applications": []}
+    year_ids = list({a["academic_year_id"] for a in apps})
+    year_name_by_id = {
+        r["id"]: r["name"]
+        for r in client.table("academic_years").select("id,name").in_("id", year_ids).execute().data
+    }
+    ac_rows = (
+        client.table("dna_application_classes")
+        .select("application_id,school_class:school_classes(id,level,branch,school_id)")
+        .in_("application_id", [a["id"] for a in apps])
+        .execute()
+        .data
+    )
+    classes_by_app = {}
+    for r in ac_rows:
+        sc = r.get("school_class") or {}
+        if sc.get("school_id") != school_id:
+            continue
+        classes_by_app.setdefault(r["application_id"], []).append(sc)
+    out = []
+    for a in apps:
+        cls = sorted(classes_by_app.get(a["id"], []), key=lambda c: (c["level"], c["branch"]))
+        out.append({
+            "id": a["id"],
+            "name": a["name"],
+            "status": a["status"],
+            "academic_year": year_name_by_id.get(a["academic_year_id"]),
+            "created_at": a["created_at"],
+            "opened_at": a.get("opened_at"),
+            "closed_at": a.get("closed_at"),
+            "class_count": len(cls),
+            "classes": [{"id": c["id"], "level": c["level"], "branch": c["branch"]} for c in cls],
+        })
+    return {"applications": out}
+
+
+@api.post("/school/dna/applications")
+async def school_dna_create_application(request: Request):
+    """Create a DRAFT DNA application via the atomic dna_create_application RPC.
+
+    school_id and account_id come only from the verified session.
+    """
+    _uid, acc = _require_school_ready(request)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="Geçersiz istek.")
+    raw_name = body.get("name")
+    name = raw_name.strip() if isinstance(raw_name, str) else ""
+    if not 1 <= len(name) <= 200:
+        raise HTTPException(status_code=422, detail=_DNA_RPC_ERRORS["dna_invalid_name"][1])
+    ids = body.get("school_class_ids")
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise HTTPException(status_code=422, detail=_DNA_RPC_ERRORS["dna_invalid_classes"][1])
+    if not ids or len(ids) > 200 or len(set(ids)) != len(ids) or not all(_DNA_UUID_RE.match(i) for i in ids):
+        raise HTTPException(status_code=422, detail=_DNA_RPC_ERRORS["dna_invalid_classes"][1])
+    client = get_service_client()
+    try:
+        app_id = client.rpc(
+            "dna_create_application",
+            {"p_school_id": acc["school_id"], "p_account_id": acc["id"], "p_name": name, "p_class_ids": ids},
+        ).execute().data
+    except Exception as err:  # noqa: BLE001
+        mapped = _DNA_RPC_ERRORS.get(getattr(err, "message", None))
+        if mapped:
+            raise HTTPException(status_code=mapped[0], detail=mapped[1])
+        logger.error("dna_create_application failed: code=%s", getattr(err, "code", None))
+        raise HTTPException(status_code=500, detail="DNA uygulaması oluşturulamadı. Lütfen tekrar deneyiniz.")
+    return {"id": app_id, "status": "draft"}
+
+
 app.include_router(api)
 
 app.add_middleware(

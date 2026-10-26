@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, LogOut, MapPinned, BarChart3, GraduationCap, ArrowUpRight, ClipboardList, Users } from "lucide-react";
+import { Loader2, LogOut, MapPinned, BarChart3, GraduationCap, ArrowUpRight, ClipboardList, Users, CalendarX2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 
@@ -126,6 +126,27 @@ export default function Modules({ variant = "school" }) {
                 Okulunuzun rehberlik ihtiyaçlarını belirlemek için RİBA uygulamalarını oluşturun ve yönetin.
               </span>
               <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-emerald-300">
+                Aç <ArrowUpRight size={15} className="transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+              </span>
+            </button>
+          )}
+
+          {/* DNA (school only) */}
+          {variant === "school" && (
+            <button
+              onClick={() => navigate("/school/dna")}
+              data-testid="module-dna"
+              className="group flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-left transition hover:border-amber-400/40 hover:bg-white/[0.06]"
+            >
+              <span className="grid h-12 w-12 place-items-center rounded-xl bg-amber-500/15 text-amber-300">
+                <CalendarX2 size={24} />
+              </span>
+              <span className="mt-4 block text-base font-bold text-white">DNA</span>
+              <span className="mt-1 block text-sm font-semibold text-amber-300/80">Devamsızlık Nedenleri Anketi</span>
+              <span className="mt-2 block text-sm text-slate-400">
+                Devamsızlık sorunu yaşayan öğrenciler için DNA uygulamalarını oluşturun ve takip edin.
+              </span>
+              <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-amber-300">
                 Aç <ArrowUpRight size={15} className="transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
               </span>
             </button>
