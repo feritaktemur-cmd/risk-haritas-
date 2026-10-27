@@ -271,3 +271,9 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Kullanıcı seçimleri: PDF indir; yalnızca değerlendirme bölümü (51 madde yok); tam kimlik; "Görüşmeyi Yapan / Tarih / İmza" + "Gizlidir" notu; 52. açık uçlu yanıt dahil (varsayılan).
 - Dosyalar: lib/dnaGuidancePdf.js (jsPDF + autotable + Roboto, dnaGuidance.js ile aynı hesap/metinler), components/DnaGuidancePdfButton.jsx; DnaGuidanceSection.jsx artık `data` alır ve başlıkta "PDF İndir" gösterir (geçersiz yanıtta buton YOK); DnaResponseDetail.jsx prop güncellendi. Backend/DB değişmedi.
 - Test: Preview'da sahte verilerle 3 PDF indirildi; normal ve hepsi-sıfır 1 sayfa, en kötü durum (7 eşit boyut + 7 özel dikkat + 2000 karakter açık uçlu) 2 sayfa, imza alanı son sayfada; Türkçe karakterler doğru; dosya adı DNA_Degerlendirme_<no>_<sınıf>.pdf.
+
+## 2026-06 — Risk Haritası: Sınıfa Özel Bağlantıyla Veri Girişi — İNCELEME RAPORU (kod yok, onay bekleniyor)
+- Canlıda 36 aktif risk maddesi var (39 değil); yalnızca RISK-036 açıklama zorunlu. 8 alan (risk_domains).
+- Veri: students (UNIQUE school_id+student_number, student_number NOT NULL), student_class_enrollments (UNIQUE student+year), student_risks (UNIQUE student+year+category), student_risk_assessments (UNIQUE student+year, FK enrollment). Haritalar/istatistik/gönderim: enrollments + students(status=active) + assessments + student_risks; gönderim school_submissions sürümlü dondurulmuş özet.
+- Mevcut kayıt: RiskEntry.jsx → POST /api/school/risk/save (silip yeniden ekler; atomik değil — dokunulmayacak).
+- Önerilen: ayrı bekleme tabloları (risk_class_links, risk_pending_responses, risk_pending_answers) + onay RPC'si (eşleştir/yeni öğrenci, atomik, mevcut değerlendirmenin üzerine yazmayı varsayılan olarak engeller). Mevcut tablolar/hesaplar değişmez.
