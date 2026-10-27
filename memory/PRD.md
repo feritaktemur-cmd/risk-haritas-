@@ -247,3 +247,9 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Frontend: pages/SchoolDnaResponses.jsx (/school/dna/:id/responses, liste + detay paneli, boş durum), components/DnaResponseList.jsx, DnaResponseDetail.jsx; SchoolDna.jsx'te taslak olmayan uygulamalara "Yanıtları Görüntüle". Geçersiz yanıtlar "Geçersiz" etiketiyle listelenir (kullanıcı tercihi).
 - Test: sahte DB + sahte oturum 33/33 (/root/dnatest/test_dna_stage4.py), regresyon 22/22, 25/25, 34/34; canlıda yalnızca limit=0 SELECT ve oturumsuz 401 kontrolü; Playwright sahte API ile liste/detay/boş durum geçti.
 - Sıradaki: Aşama 5 (uygulama kapatma + geçersiz kılma), raporlar/PDF, RAM gönderimi.
+
+## 2026-06 — DNA Yanıt Kaydetme Hatası Teşhisi (AÇIK — kullanıcıdan canlı SQL sonucu bekleniyor)
+- Belirti: canlı deneme uygulamasında gönderim 500; Supabase RPC 400, Postgres kodu 42703 (tanımsız sütun). Canlıda yanıt kaydı YOK (salt okuma: dna_responses=0, dna_answers=0).
+- Elenenler: RPC imzası birebir uyumlu (OpenAPI), kullanılan 52 sütun canlıda mevcut; 001–034 izole PG15 + yerel PostgREST v12 + supabase-py 2.31 ile aynı gönderim BAŞARILI. Sonuç: canlıdaki dna_* fonksiyon/tetikleyici gövdesi depodaki 033'ten farklı.
+- Kullanıcıya verilen salt okuma SQL'i: SELECT p.proname, md5(p.prosrc) ... LIKE 'dna\_%'. Beklenen md5'ler: dna_submit_response=db327edbd2e3d11b8dd530451bea820d, dna_guard_response_insert=7877891387944840fe208dd0e1ec70dd, dna_guard_answer_insert=62ba8a029cc6bd89478874094697d631, dna_check_response_complete=7c4770219b189eab22e4fb731223cf72, dna_guard_audit_insert=afb782781ffd17f5d8553f916cbe5fc4 (tam liste izole DB'den yeniden üretilebilir). Beklenen kullanıcı tetikleyici sayısı (dna_*): 36.
+- Yapılan (onaylı): server.py'ye uvicorn.access log filtresi (_MaskDnaTokenFilter) — /api/dna/respond/<token> → /api/dna/respond/***. Regresyon 22/22, 25/25, 34/34, 33/33. Not: filtreden önceki eski log satırlarında token hâlâ duruyor.

@@ -153,6 +153,22 @@ load_dotenv(Path(__file__).parent / ".env")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("school_risk_maps")
 
+
+class _MaskDnaTokenFilter(logging.Filter):
+    """Erişim loglarında DNA anket token'ını maskeler."""
+    _re = _re.compile(r"(/api/dna/respond/)[^/?\s\"]+")
+
+    def filter(self, record):
+        if isinstance(record.args, tuple):
+            record.args = tuple(self._re.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args)
+        if isinstance(record.msg, str):
+            record.msg = self._re.sub(r"\1***", record.msg)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_MaskDnaTokenFilter())
+
+
 app = FastAPI(title="School Risk Maps API")
 api = APIRouter(prefix="/api")
 
