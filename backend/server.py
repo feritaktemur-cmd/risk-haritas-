@@ -157,7 +157,7 @@ logger = logging.getLogger("school_risk_maps")
 
 class _MaskDnaTokenFilter(logging.Filter):
     """Erişim loglarında DNA anket token'ını maskeler."""
-    _re = _re.compile(r"(/api/dna/respond/)[^/?\s\"]+")
+    _re = _re.compile(r"(/api/(?:dna|risk)/respond/)[^/?\s\"]+")
 
     def filter(self, record):
         if isinstance(record.args, tuple):
@@ -6473,6 +6473,99 @@ async def school_risk_links_deactivate(link_id: str, request: Request):
     _risk_link_rpc(get_service_client(), "risk_link_deactivate", {
         "p_link_id": link_id, "p_school_id": acc["school_id"], "p_actor_account_id": acc["id"],
     })
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Risk Haritası: herkese açık sınıf bağlantısı formu (yalnızca bekleme alanına yazar)
+# ---------------------------------------------------------------------------
+_RISK_PUBLIC_INVALID = "Bu bağlantı geçerli değil veya kapatılmış. Lütfen öğretmeninize danışınız."
+_RISK_SUBMIT_ERRORS = {
+    "risk_link_invalid": (404, _RISK_PUBLIC_INVALID),
+    "risk_link_invalid_name": (422, "Ad ve soyad alanlarını doğru doldurunuz."),
+    "risk_link_invalid_student_number": (422, "Okul numaranızı yalnızca harf, rakam veya tire kullanarak yazınız."),
+    "risk_link_invalid_items": (422, "Seçimleriniz okunamadı. Lütfen sayfayı yenileyip tekrar deneyiniz."),
+    "risk_link_duplicate_item": (422, "Seçimleriniz okunamadı. Lütfen sayfayı yenileyip tekrar deneyiniz."),
+    "risk_link_note_required": (422, "\"Diğer\" seçeneği için kısa bir açıklama yazınız."),
+    "risk_link_note_too_long": (422, "Açıklama en fazla 500 karakter olabilir."),
+}
+
+
+def _risk_public_link(client, token: str):
+    if not _DNA_TOKEN_RE.match(token or ""):
+        raise HTTPException(status_code=404, detail=_RISK_PUBLIC_INVALID)
+    rows = (
+        client.table("risk_class_links").select("school_id,school_class_id,academic_year_id,is_active,expires_at")
+        .eq("token_hash", hash_risk_link_token(token)).limit(1).execute().data
+    )
+    link = rows[0] if rows else None
+    if not link or not link["is_active"]:
+        raise HTTPException(status_code=404, detail=_RISK_PUBLIC_INVALID)
+    if link["expires_at"] and datetime.fromisoformat(link["expires_at"]) <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=404, detail=_RISK_PUBLIC_INVALID)
+    year = _active_academic_year(client)
+    if not year or year["id"] != link["academic_year_id"]:
+        raise HTTPException(status_code=404, detail=_RISK_PUBLIC_INVALID)
+    return link, year
+
+
+@api.get("/risk/respond/{token}")
+async def risk_public_form(token: str):
+    """PUBLIC read-only form data. No ids of school/class, no hashes, no other students."""
+    client = get_service_client()
+    link, year = _risk_public_link(client, token)
+    school = client.table("schools").select("name").eq("id", link["school_id"]).limit(1).execute().data
+    cls = client.table("school_classes").select("level,branch").eq("id", link["school_class_id"]).limit(1).execute().data
+    cats = (
+        client.table("risk_categories").select("id,sort_order,label,requires_note")
+        .eq("is_active", True).order("sort_order").execute().data
+    )
+    if not cls or not cats:
+        raise HTTPException(status_code=404, detail=_RISK_PUBLIC_INVALID)
+    return JSONResponse({
+        "school_name": school[0]["name"] if school else None,
+        "class_label": f"{cls[0]['level']}/{cls[0]['branch']}",
+        "academic_year": year["name"],
+        "items": [{"id": c["id"], "no": c["sort_order"], "label": c["label"], "requires_note": c["requires_note"]} for c in cats],
+    }, headers=_DNA_NO_STORE)
+
+
+@api.post("/risk/respond/{token}")
+async def risk_public_submit(token: str, request: Request):
+    """PUBLIC submit via risk_link_submit RPC (pending only). Logs never contain personal data."""
+    if not _DNA_TOKEN_RE.match(token or ""):
+        raise HTTPException(status_code=404, detail=_RISK_PUBLIC_INVALID)
+    if _dna_rate_limited(request, "risk:" + token):
+        raise HTTPException(status_code=429, detail="Çok fazla deneme yapıldı. Lütfen birkaç dakika sonra tekrar deneyiniz.")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="Form verisi okunamadı.")
+    items = body.get("items")
+    if not isinstance(items, list) or len(items) > 100 or not all(isinstance(i, dict) for i in items):
+        raise HTTPException(status_code=422, detail="Seçimleriniz okunamadı. Lütfen sayfayı yenileyip tekrar deneyiniz.")
+    if not items and body.get("confirm_none") is not True:
+        raise HTTPException(status_code=422, detail="Hiçbir madde seçmediyseniz lütfen \"Bunlardan hiçbiri benim için geçerli değil\" kutusunu işaretleyiniz.")
+    if items and body.get("confirm_none") is True:
+        raise HTTPException(status_code=422, detail="Madde seçtiyseniz \"hiçbiri geçerli değil\" kutusunu kaldırınız.")
+    fields = [body.get(k) for k in ("first_name", "last_name", "student_number")]
+    if not all(isinstance(f, str) for f in fields):
+        raise HTTPException(status_code=422, detail="Ad, soyad ve okul numarası alanlarını doldurunuz.")
+    clean = [{"risk_category_id": i.get("risk_category_id"), "note": i.get("note")} for i in items]
+    client = get_service_client()
+    try:
+        client.rpc("risk_link_submit", {
+            "p_token_hash": hash_risk_link_token(token), "p_first_name": fields[0], "p_last_name": fields[1],
+            "p_student_number": fields[2], "p_items": clean,
+        }).execute()
+    except Exception as err:  # noqa: BLE001
+        mapped = _RISK_SUBMIT_ERRORS.get(getattr(err, "message", None))
+        if mapped:
+            raise HTTPException(status_code=mapped[0], detail=mapped[1])
+        logger.error("risk_link_submit failed: code=%s", getattr(err, "code", None))
+        raise HTTPException(status_code=500, detail="Formunuz gönderilemedi. Lütfen tekrar deneyiniz.")
     return {"ok": True}
 
 

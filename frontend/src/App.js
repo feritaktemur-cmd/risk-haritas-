@@ -34,6 +34,7 @@ import SchoolDna from "./pages/SchoolDna";
 import SchoolDnaNew from "./pages/SchoolDnaNew";
 import SchoolDnaResponses from "./pages/SchoolDnaResponses";
 import SchoolRiskLinks from "./pages/SchoolRiskLinks";
+import RiskRespond from "./pages/RiskRespond";
 import RiskEntry from "./pages/RiskEntry";
 import ClassRiskMap from "./pages/ClassRiskMap";
 import SchoolRiskMap from "./pages/SchoolRiskMap";
@@ -137,6 +138,7 @@ export default function App() {
         <Route path="/school/riba/:applicationId" element={<SchoolRibaManage />} />
         <Route path="/riba/respond/:token" element={<RibaRespond />} />
         <Route path="/dna/respond/:token" element={<DnaRespond />} />
+        <Route path="/risk/respond/:token" element={<RiskRespond />} />
         <Route path="/" element={<Navigate to="/school/login" replace />} />
         <Route path="/status" element={<Shell><ConnectionStatus /></Shell>} />
       </Routes>

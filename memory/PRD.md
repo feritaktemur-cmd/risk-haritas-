@@ -291,3 +291,10 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Frontend: pages/SchoolRiskLinks.jsx (/school/risk-links), components/RiskLinkRow.jsx (oluştur/yenile/kapat + onay), components/RiskLinkShareCard.jsx (gizli QR notu); SchoolHome.jsx'e 5. kart "Sınıf Bağlantıları"; App.js rota.
 - Test: /root/dnatest/test_risk_links_api.py 32/32 (TestClient → yerel PostgREST v12 → izole PG15 rkfinal; okul ayrımı, yetkisiz erişim, yenileme sıra no tutarlılığı, fail-closed, anahtar değişimi 409, aktif yıl yok 409, log temizliği, mevcut tablolara yazım yok). DNA regresyon 22/25/34/33 geçti. Canlıda yalnızca oturumsuz 401 kontrolü. Playwright sahte API ile oluştur/kapat akışı doğrulandı.
 - Sıradaki: Aşama 2 herkese açık öğrenci formu (risk_link_submit, IP hız sınırı, token log maskeleme), sonra QR gösterimi açılacak.
+
+## 2026-06 — Risk Haritası Öğrenci Formu (Aşama 2) UYGULANDI — Preview, onay bekleniyor
+- Kararlar: 36 madde mevcut metinleriyle düz liste; hiç seçim yoksa "Bunlardan hiçbiri benim için geçerli değil" kutusu zorunlu; QR/bağlantı Sınıf Bağlantıları ekranında onay ekranı bitince açılacak (şimdilik gizli).
+- Backend: GET /api/risk/respond/{token} (okul adı, sınıf, yıl, 36 madde; kimlik/hash yok, no-store; kapalı/süresi geçmiş/yıl pasif → 404), POST /api/risk/respond/{token} (risk_link_submit → yalnızca bekleme alanı; IP+bağlantı başına 10 dk'da 30 deneme → 429; confirm_none kuralı; RK mesaj eşlemesi _RISK_SUBMIT_ERRORS). Log filtresi /api/risk/respond/ kodlarını da maskeler.
+- Frontend: pages/RiskRespond.jsx (/risk/respond/:token), components/RiskRespondItem.jsx (seçim + RISK-036 açıklama alanı).
+- Test: /root/dnatest/test_risk_respond_api.py 29/29 (yerel PostgREST + izole PG15), test_risk_links_api.py 32/32, DNA regresyon geçti; canlıda bilinmeyen kod 404 ve log maskeleme doğrulandı (yazma yok); Playwright sahte API ile form kuralları ve başarı/geçersiz ekranları doğrulandı.
+- Sıradaki: Aşama 3 onay bekleyenler listesi (olası tekrar işaretli), reddet/onayla (risk_link_approve), ardından QR gösterimi açılacak.
