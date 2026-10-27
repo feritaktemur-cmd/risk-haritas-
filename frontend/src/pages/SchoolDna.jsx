@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Loader2, CalendarX2, ArrowLeft, Plus, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Loader2, CalendarX2, ArrowLeft, Plus, AlertTriangle, CheckCircle2, ListChecks } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { CorporateFooter } from "../components/CorporateFooter";
 import { DnaShareCard } from "../components/DnaShareCard";
@@ -33,12 +33,22 @@ function StatusBadge({ status, testId }) {
 }
 
 function ApplicationRow({ app, getHeaders, onChanged }) {
+  const navigate = useNavigate();
   return (
     <li data-testid={`dna-app-${app.id}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-base font-bold text-white" data-testid={`dna-app-name-${app.id}`}>{app.name}</p>
         <div className="flex items-center gap-2">
           {app.status === "draft" && <DnaActivateButton app={app} getHeaders={getHeaders} onActivated={onChanged} />}
+          {app.status !== "draft" && (
+            <button
+              onClick={() => navigate(`/school/dna/${app.id}/responses`)}
+              data-testid={`dna-app-responses-btn-${app.id}`}
+              className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-3.5 py-1.5 text-xs font-bold text-slate-200 ring-1 ring-white/10 transition-colors hover:bg-white/[0.12]"
+            >
+              <ListChecks size={14} /> Yanıtları Görüntüle
+            </button>
+          )}
           <StatusBadge status={app.status} testId={`dna-app-status-${app.id}`} />
         </div>
       </div>

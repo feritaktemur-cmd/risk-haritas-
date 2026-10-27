@@ -32,6 +32,7 @@ import SchoolStudents from "./pages/SchoolStudents";
 import StudentManagementHome from "./pages/StudentManagementHome";
 import SchoolDna from "./pages/SchoolDna";
 import SchoolDnaNew from "./pages/SchoolDnaNew";
+import SchoolDnaResponses from "./pages/SchoolDnaResponses";
 import RiskEntry from "./pages/RiskEntry";
 import ClassRiskMap from "./pages/ClassRiskMap";
 import SchoolRiskMap from "./pages/SchoolRiskMap";
@@ -120,6 +121,7 @@ export default function App() {
         <Route path="/school/student-management" element={<StudentManagementHome />} />
         <Route path="/school/dna" element={<SchoolDna />} />
         <Route path="/school/dna/new" element={<SchoolDnaNew />} />
+        <Route path="/school/dna/:id/responses" element={<SchoolDnaResponses />} />
         <Route path="/school/student-management/classes" element={<SchoolClasses />} />
         <Route path="/school/student-management/students" element={<SchoolStudents />} />
         <Route path="/school/classes" element={<Navigate to="/school/student-management/classes" replace />} />

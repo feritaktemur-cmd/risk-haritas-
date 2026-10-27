@@ -239,3 +239,11 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Frontend: pages/DnaRespond.jsx (/dna/respond/:token), components/DnaQuestion.jsx (Evet/Bazen/Hayır). Kısa kişisel veri bilgilendirmesi (onay kutusu YOK — kullanıcı tercihi), ilerleme sayacı, eksik soruların işaretlenmesi, teşekkür ekranı.
 - Test (canlıya yanıt yazılmadı): sahte istemci 34/34 (/root/dnatest/test_dna_stage3.py) + önceki 25/25, 22/22; Playwright sahte API ile form akışı geçti; canlı bilinmeyen token GET 404.
 - Bilinen sınır: gönderim sınırı bellekte tutulur (yeniden başlatmada sıfırlanır; birden çok sunucuda ortak değil).
+
+
+## 2026-06 — DNA Aşama 4: Okul Yanıt Listesi + Tekil Yanıt (TAMAMLANDI, kullanıcı doğrulaması bekliyor)
+- Şema/RLS/RPC DEĞİŞMEDİ: 033'teki service_role SELECT yetkisi yeterli; tüm sorgular backend'de oturumdaki school_id ile sınırlanır. Yalnızca okuma, hiçbir yazma/RPC yok.
+- server.py: GET /api/school/dna/applications/{id}/responses (ad, soyad, okul no, sınıf, tarih, durum; açık uçlu metin/puan yok) ve GET /api/school/dna/applications/{id}/responses/{response_id} (7 boyuta göre gruplu 51 cevap, boyut puanı/maks, toplam puan /102, 52. açık uçlu soru+yanıt, geçersizse gerekçe). Başka okul/uygulama/biçimsiz kimlik → 404; Cache-Control: no-store; loglarda kişisel veri yok.
+- Frontend: pages/SchoolDnaResponses.jsx (/school/dna/:id/responses, liste + detay paneli, boş durum), components/DnaResponseList.jsx, DnaResponseDetail.jsx; SchoolDna.jsx'te taslak olmayan uygulamalara "Yanıtları Görüntüle". Geçersiz yanıtlar "Geçersiz" etiketiyle listelenir (kullanıcı tercihi).
+- Test: sahte DB + sahte oturum 33/33 (/root/dnatest/test_dna_stage4.py), regresyon 22/22, 25/25, 34/34; canlıda yalnızca limit=0 SELECT ve oturumsuz 401 kontrolü; Playwright sahte API ile liste/detay/boş durum geçti.
+- Sıradaki: Aşama 5 (uygulama kapatma + geçersiz kılma), raporlar/PDF, RAM gönderimi.

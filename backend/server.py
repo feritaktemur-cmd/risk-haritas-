@@ -15,6 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from supabase_client import get_service_client, get_anon_client, SUPABASE_URL
 from excel_preview import analyze_rows, load_reference, plan_import, VALID_MANAGEMENT_TYPES
@@ -6064,6 +6065,122 @@ async def school_dna_share_link(application_id: str, request: Request):
         logger.error("dna share: token hash mismatch for application")
         raise HTTPException(status_code=409, detail="Paylaşım bağlantısı doğrulanamadı. Lütfen RAM ile iletişime geçiniz.")
     return {"token": token}
+
+
+# ---------------------------------------------------------------------------
+# DNA Aşama 4: okulun kendi uygulamalarının yanıtlarını okuması (yalnızca okuma)
+# ---------------------------------------------------------------------------
+_DNA_NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+
+
+def _dna_own_application(client, application_id: str, school_id: str):
+    """Uygulama oturumdaki okula ait değilse 404 (varlık bilgisi sızdırılmaz)."""
+    _dna_require_app_id(application_id)
+    apps = (
+        client.table("dna_applications").select("id,name,status,catalog_id")
+        .eq("id", application_id).eq("school_id", school_id).limit(1).execute().data
+    )
+    if not apps:
+        raise HTTPException(status_code=404, detail="DNA uygulaması bulunamadı.")
+    return apps[0]
+
+
+def _dna_class_labels(client, application_id: str, school_id: str):
+    rows = (
+        client.table("dna_application_classes")
+        .select("application_id,school_class:school_classes(id,level,branch,school_id)")
+        .eq("application_id", application_id).execute().data
+    )
+    out = {}
+    for r in rows:
+        sc = r.get("school_class") or {}
+        if sc.get("school_id") == school_id:
+            out[sc["id"]] = (sc["level"], sc["branch"])
+    return out
+
+
+@api.get("/school/dna/applications/{application_id}/responses")
+async def school_dna_list_responses(application_id: str, request: Request):
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    app = _dna_own_application(client, application_id, school_id)
+    rows = (
+        client.table("dna_responses")
+        .select("id,first_name,last_name,student_number,school_class_id,submitted_at,status")
+        .eq("application_id", application_id).eq("school_id", school_id)
+        .order("submitted_at", desc=True).execute().data
+    )
+    labels = _dna_class_labels(client, application_id, school_id)
+    responses = []
+    for r in rows:
+        lv = labels.get(r["school_class_id"])
+        responses.append({
+            "id": r["id"], "first_name": r["first_name"], "last_name": r["last_name"],
+            "student_number": r["student_number"],
+            "class_label": f"{lv[0]}/{lv[1]}" if lv else "—",
+            "submitted_at": r["submitted_at"], "status": r["status"],
+        })
+    return JSONResponse(
+        {"application": {"id": app["id"], "name": app["name"], "status": app["status"]}, "responses": responses},
+        headers=_DNA_NO_STORE,
+    )
+
+
+@api.get("/school/dna/applications/{application_id}/responses/{response_id}")
+async def school_dna_response_detail(application_id: str, response_id: str, request: Request):
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    app = _dna_own_application(client, application_id, school_id)
+    if not _DNA_UUID_RE.match(response_id or ""):
+        raise HTTPException(status_code=404, detail="Yanıt bulunamadı.")
+    rows = (
+        client.table("dna_responses")
+        .select("id,first_name,last_name,student_number,school_class_id,open_text,total_score,status,submitted_at,invalidated_at,invalidation_reason")
+        .eq("id", response_id).eq("application_id", application_id).eq("school_id", school_id)
+        .limit(1).execute().data
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Yanıt bulunamadı.")
+    resp = rows[0]
+    cat_id = app["catalog_id"]
+    value_by_item = {
+        a["item_id"]: a["value"]
+        for a in client.table("dna_answers").select("item_id,value").eq("response_id", response_id).execute().data
+    }
+    items = client.table("dna_items").select("id,item_no,text,dimension_id").eq("catalog_id", cat_id).execute().data
+    dims = (
+        client.table("dna_dimensions").select("id,dimension_no,name")
+        .eq("catalog_id", cat_id).order("dimension_no").execute().data
+    )
+    cat = client.table("dna_catalogs").select("open_text_prompt").eq("id", cat_id).limit(1).execute().data
+    by_dim = {d["id"]: [] for d in dims}
+    for it in sorted(items, key=lambda i: i["item_no"]):
+        by_dim.setdefault(it["dimension_id"], []).append(
+            {"item_no": it["item_no"], "text": it["text"], "value": value_by_item.get(it["id"])}
+        )
+    dimensions = []
+    for d in dims:
+        its = by_dim.get(d["id"], [])
+        dimensions.append({
+            "dimension_no": d["dimension_no"], "name": d["name"],
+            "score": sum(i["value"] or 0 for i in its), "max_score": 2 * len(its), "items": its,
+        })
+    lv = _dna_class_labels(client, application_id, school_id).get(resp["school_class_id"])
+    return JSONResponse({
+        "application": {"id": app["id"], "name": app["name"]},
+        "response": {
+            "id": resp["id"], "first_name": resp["first_name"], "last_name": resp["last_name"],
+            "student_number": resp["student_number"], "class_label": f"{lv[0]}/{lv[1]}" if lv else "—",
+            "submitted_at": resp["submitted_at"], "status": resp["status"],
+            "invalidated_at": resp.get("invalidated_at"), "invalidation_reason": resp.get("invalidation_reason"),
+            "total_score": resp["total_score"], "max_total_score": 102,
+            "open_text_prompt": cat[0]["open_text_prompt"] if cat else None,
+            "open_text": resp.get("open_text"),
+        },
+        "dimensions": dimensions,
+    }, headers=_DNA_NO_STORE)
 
 
 # ---------------------------------------------------------------------------
