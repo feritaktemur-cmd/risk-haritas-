@@ -266,3 +266,8 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Geçersiz yanıt: değerlendirme, öneri ve özel dikkat OLUŞTURULMAZ; yalnızca "Bu yanıt geçersiz kılındığından bireysel değerlendirme oluşturulmamıştır."
 - Uygulandı: frontend/src/lib/dnaGuidance.js (onaylı 7 boyut metni, ortak açıklama, sabit mesajlar, computeDnaGuidance saf fonksiyonu), components/DnaGuidanceSection.jsx (yeni bölüm), components/DnaResponseDetail.jsx (yalnızca import + bileşen bağlama, 2 satır). Backend/DB/RPC/puanlama değişmedi.
 - Test: node birim testi 8/8 (normal, eşitlik, tek pozitif, üçlü eşitlik, hepsi sıfır, özel dikkat filtresi, sıralamadan bağımsızlık); Preview'da sahte oturum + sahte API ile 4 senaryo ekranda doğrulandı; mevcut 51 madde, 7 puan kartı, liste ve geçersiz etiketi bozulmadı. Production'a yayınlanmadı.
+
+## 2026-06 — DNA Bireysel Değerlendirme PDF'i (UYGULANDI — Preview'da test edildi, onay bekleniyor)
+- Kullanıcı seçimleri: PDF indir; yalnızca değerlendirme bölümü (51 madde yok); tam kimlik; "Görüşmeyi Yapan / Tarih / İmza" + "Gizlidir" notu; 52. açık uçlu yanıt dahil (varsayılan).
+- Dosyalar: lib/dnaGuidancePdf.js (jsPDF + autotable + Roboto, dnaGuidance.js ile aynı hesap/metinler), components/DnaGuidancePdfButton.jsx; DnaGuidanceSection.jsx artık `data` alır ve başlıkta "PDF İndir" gösterir (geçersiz yanıtta buton YOK); DnaResponseDetail.jsx prop güncellendi. Backend/DB değişmedi.
+- Test: Preview'da sahte verilerle 3 PDF indirildi; normal ve hepsi-sıfır 1 sayfa, en kötü durum (7 eşit boyut + 7 özel dikkat + 2000 karakter açık uçlu) 2 sayfa, imza alanı son sayfada; Türkçe karakterler doğru; dosya adı DNA_Degerlendirme_<no>_<sınıf>.pdf.

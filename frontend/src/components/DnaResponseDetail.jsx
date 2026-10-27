@@ -58,7 +58,7 @@ export const DnaResponseDetail = ({ data }) => {
           {r.open_text || <span className="italic text-slate-500">Öğrenci bu soruyu boş bıraktı.</span>}
         </p>
       </section>
-      <DnaGuidanceSection status={r.status} dimensions={data.dimensions} />
+      <DnaGuidanceSection data={data} />
     </div>
   );
 };

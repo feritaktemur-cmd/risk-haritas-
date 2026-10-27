@@ -4,15 +4,19 @@ import {
   DNA_GUIDANCE_TEXTS, DNA_GUIDANCE_DISCLAIMER, DNA_GUIDANCE_ALL_ZERO, DNA_GUIDANCE_INVALID,
   DNA_ATTENTION_TITLE, DNA_ATTENTION_NOTE, computeDnaGuidance,
 } from "../lib/dnaGuidance";
+import { DnaGuidancePdfButton } from "./DnaGuidancePdfButton";
 
 const fmtAvg = (v) => v.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const ANSWER = { 2: "Evet", 1: "Bazen" };
 
-const Shell = ({ children }) => (
+const Shell = ({ children, action }) => (
   <section data-testid="dna-guidance-section" className="rounded-2xl border border-indigo-400/20 bg-indigo-500/[0.04] p-5">
-    <h3 className="flex items-center gap-2 text-sm font-extrabold text-indigo-200">
-      <Compass size={16} /> Bireysel Değerlendirme ve Rehberlik Önerileri
-    </h3>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h3 className="flex items-center gap-2 text-sm font-extrabold text-indigo-200">
+        <Compass size={16} /> Bireysel Değerlendirme ve Rehberlik Önerileri
+      </h3>
+      {action}
+    </div>
     <div className="mt-4 space-y-4">{children}</div>
   </section>
 );
@@ -57,13 +61,14 @@ const Attention = ({ items }) => (
   </div>
 );
 
-export const DnaGuidanceSection = ({ status, dimensions }) => {
+export const DnaGuidanceSection = ({ data }) => {
+  const { status } = data.response;
   if (status === "invalidated") {
     return <Shell><p data-testid="dna-guidance-invalid" className="text-sm text-slate-300">{DNA_GUIDANCE_INVALID}</p></Shell>;
   }
-  const g = computeDnaGuidance(dimensions);
+  const g = computeDnaGuidance(data.dimensions);
   return (
-    <Shell>
+    <Shell action={<DnaGuidancePdfButton data={data} />}>
       <Averages averages={g.averages} />
       {g.allZero
         ? <p data-testid="dna-guidance-all-zero" className="text-sm text-slate-200">{DNA_GUIDANCE_ALL_ZERO}</p>
