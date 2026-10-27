@@ -23,6 +23,7 @@ from students_excel import analyze_student_rows
 from admin_accounts import generate_username, generate_temp_password, synth_email_for
 from riba_link_token import generate_link_token, hash_link_token, RibaLinkTokenError
 from dna_link_token import generate_dna_token, hash_dna_token, DnaLinkTokenError
+from risk_link_token import generate_risk_link_token, hash_risk_link_token, RiskLinkTokenError
 import hmac
 from riba_calc import (
     build_target_frequencies,
@@ -6338,6 +6339,140 @@ async def dna_public_submit(token: str, request: Request):
             raise HTTPException(status_code=mapped[0], detail=mapped[1])
         logger.error("dna_submit_response failed: code=%s", getattr(err, "code", None))
         raise HTTPException(status_code=500, detail="Yanıtınız kaydedilemedi. Lütfen tekrar deneyiniz.")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Risk Haritası: sınıfa özel bağlantılar (Migration 036 — okul paneli, Aşama 1)
+# ---------------------------------------------------------------------------
+_RISK_LINK_ERRORS = {
+    "risk_link_account_not_authorized": (403, "Bu işlem için yetkiniz yok."),
+    "risk_link_class_not_found": (404, "Sınıf bulunamadı."),
+    "risk_link_not_found": (404, "Aktif bağlantı bulunamadı."),
+    "risk_link_no_active_year": (409, "Aktif eğitim yılı belirlenemedi. Lütfen RAM ile iletişime geçin."),
+    "risk_link_conflict": (409, "Bağlantı şu anda oluşturulamadı. Lütfen tekrar deneyiniz."),
+    "risk_link_invalid_token_hash": (500, "Bağlantı oluşturulamadı. Lütfen tekrar deneyiniz."),
+}
+
+
+def _risk_link_rpc(client, fn: str, params: dict):
+    try:
+        return client.rpc(fn, params).execute().data
+    except Exception as err:  # noqa: BLE001
+        mapped = _RISK_LINK_ERRORS.get(getattr(err, "message", None))
+        if mapped:
+            raise HTTPException(status_code=mapped[0], detail=mapped[1])
+        logger.error("%s failed: code=%s", fn, getattr(err, "code", None))
+        raise HTTPException(status_code=500, detail="İşlem tamamlanamadı. Lütfen tekrar deneyiniz.")
+
+
+def _risk_link_year(client):
+    year = _active_academic_year(client)
+    if year is None:
+        raise HTTPException(status_code=409, detail="Aktif eğitim yılı belirlenemedi. Lütfen RAM ile iletişime geçin.")
+    return year
+
+
+def _risk_link_hash(school_class_id: str, year_id: str, seq: int) -> str:
+    try:
+        return hash_risk_link_token(generate_risk_link_token(school_class_id, year_id, seq))
+    except RiskLinkTokenError:
+        logger.error("risk link: link secret missing")
+        raise HTTPException(status_code=503, detail="Bağlantı şu anda üretilemiyor. Lütfen RAM ile iletişime geçiniz.")
+
+
+@api.get("/school/risk-links")
+async def school_risk_links_list(request: Request):
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _risk_link_year(client)
+    classes = (
+        client.table("school_classes").select("id,level,branch")
+        .eq("school_id", school_id).order("level").order("branch").execute().data
+    )
+    links = (
+        client.table("risk_class_links").select("id,school_class_id,is_active,created_at")
+        .eq("school_id", school_id).eq("academic_year_id", year["id"]).execute().data
+    )
+    by_class = {}
+    for ln in links:
+        info = by_class.setdefault(ln["school_class_id"], {"active": None, "count": 0})
+        info["count"] += 1
+        if ln["is_active"]:
+            info["active"] = {"id": ln["id"], "created_at": ln["created_at"]}
+    return JSONResponse({
+        "academic_year": year["name"],
+        "classes": [
+            {"id": c["id"], "level": c["level"], "branch": c["branch"],
+             "active_link": by_class.get(c["id"], {}).get("active"),
+             "link_count": by_class.get(c["id"], {}).get("count", 0)}
+            for c in classes
+        ],
+    }, headers=_DNA_NO_STORE)
+
+
+@api.post("/school/risk-links")
+async def school_risk_links_create(request: Request):
+    _uid, acc = _require_school_ready(request)
+    body = await request.json()
+    class_id = (body or {}).get("school_class_id") if isinstance(body, dict) else None
+    if not isinstance(class_id, str) or not _DNA_UUID_RE.match(class_id):
+        raise HTTPException(status_code=404, detail="Sınıf bulunamadı.")
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _risk_link_year(client)
+    if not client.table("school_classes").select("id").eq("id", class_id).eq("school_id", school_id).limit(1).execute().data:
+        raise HTTPException(status_code=404, detail="Sınıf bulunamadı.")
+    existing = (
+        client.table("risk_class_links").select("id")
+        .eq("school_class_id", class_id).eq("academic_year_id", year["id"]).execute().data
+    )
+    token_hash = _risk_link_hash(class_id, year["id"], len(existing) + 1)
+    link_id = _risk_link_rpc(client, "risk_link_create", {
+        "p_school_id": school_id, "p_actor_account_id": acc["id"], "p_school_class_id": class_id,
+        "p_token_hash": token_hash, "p_expires_at": None,
+    })
+    return {"id": link_id}
+
+
+@api.get("/school/risk-links/{link_id}/share")
+async def school_risk_links_share(link_id: str, request: Request):
+    _uid, acc = _require_school_ready(request)
+    if not _DNA_UUID_RE.match(link_id or ""):
+        raise HTTPException(status_code=404, detail="Aktif bağlantı bulunamadı.")
+    client = get_service_client()
+    rows = (
+        client.table("risk_class_links").select("id,school_class_id,academic_year_id,token_hash,is_active")
+        .eq("id", link_id).eq("school_id", acc["school_id"]).limit(1).execute().data
+    )
+    if not rows or not rows[0]["is_active"]:
+        raise HTTPException(status_code=404, detail="Aktif bağlantı bulunamadı.")
+    link = rows[0]
+    siblings = (
+        client.table("risk_class_links").select("id")
+        .eq("school_class_id", link["school_class_id"]).eq("academic_year_id", link["academic_year_id"])
+        .order("created_at").order("id").execute().data
+    )
+    seq = next(i for i, s in enumerate(siblings, start=1) if s["id"] == link_id)
+    try:
+        token = generate_risk_link_token(link["school_class_id"], link["academic_year_id"], seq)
+    except RiskLinkTokenError:
+        raise HTTPException(status_code=503, detail="Bağlantı şu anda üretilemiyor. Lütfen RAM ile iletişime geçiniz.")
+    if not hmac.compare_digest(hash_risk_link_token(token), link["token_hash"]):
+        logger.error("risk link share: token hash mismatch")
+        raise HTTPException(status_code=409, detail="Bağlantı doğrulanamadı. Lütfen bağlantıyı yenileyiniz.")
+    return JSONResponse({"token": token}, headers=_DNA_NO_STORE)
+
+
+@api.post("/school/risk-links/{link_id}/deactivate")
+async def school_risk_links_deactivate(link_id: str, request: Request):
+    _uid, acc = _require_school_ready(request)
+    if not _DNA_UUID_RE.match(link_id or ""):
+        raise HTTPException(status_code=404, detail="Aktif bağlantı bulunamadı.")
+    _risk_link_rpc(get_service_client(), "risk_link_deactivate", {
+        "p_link_id": link_id, "p_school_id": acc["school_id"], "p_actor_account_id": acc["id"],
+    })
     return {"ok": True}
 
 
