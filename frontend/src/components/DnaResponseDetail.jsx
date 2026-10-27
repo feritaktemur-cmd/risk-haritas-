@@ -1,5 +1,6 @@
 import React from "react";
 import { DnaInvalidBadge } from "./DnaResponseList";
+import { DnaGuidanceSection } from "./DnaGuidanceSection";
 
 const LABEL = {
   2: { t: "Evet", cls: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30" },
@@ -57,6 +58,7 @@ export const DnaResponseDetail = ({ data }) => {
           {r.open_text || <span className="italic text-slate-500">Öğrenci bu soruyu boş bıraktı.</span>}
         </p>
       </section>
+      <DnaGuidanceSection status={r.status} dimensions={data.dimensions} />
     </div>
   );
 };
