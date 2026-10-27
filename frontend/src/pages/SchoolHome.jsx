@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { School, Loader2, LogOut, MapPin, ShieldAlert, BarChart3, Building2, PieChart, QrCode } from "lucide-react";
+import { School, Loader2, LogOut, MapPin, ShieldAlert, BarChart3, Building2, PieChart, QrCode, ClipboardCheck } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -16,6 +16,7 @@ export default function SchoolHome() {
   const navigate = useNavigate();
   const [panel, setPanel] = useState(null);
   const [checking, setChecking] = useState(true);
+  const [pendingCount, setPendingCount] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -28,6 +29,9 @@ export default function SchoolHome() {
           setPanel(res.data);
           setChecking(false);
         }
+        axios.get(`${API}/school/risk-pending/count`, { headers: h })
+          .then((r) => active && setPendingCount(r.data.pending))
+          .catch(() => {});
       } catch (err) {
         const detail = err.response?.data?.detail;
         if (err.response?.status === 403 && detail === "password_change_required") {
@@ -157,6 +161,25 @@ export default function SchoolHome() {
               <span className="block text-sm font-bold text-white">Sınıf Bağlantıları</span>
               <span className="block text-xs text-slate-400">Her sınıf için öğrencilerin risk formunu dolduracağı bağlantıyı yönetin.</span>
             </span>
+          </button>
+
+          <button
+            onClick={() => navigate("/school/risk-pending")}
+            data-testid="nav-risk-pending"
+            className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-4 text-left transition hover:border-emerald-400/40 hover:bg-white/[0.06]"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300">
+              <ClipboardCheck size={20} />
+            </span>
+            <span className="flex-1">
+              <span className="block text-sm font-bold text-white">Öğrenci Formları Onayı</span>
+              <span className="block text-xs text-slate-400">Bağlantıyla gelen formları inceleyin; onayladıklarınız Risk Haritası'na aktarılır.</span>
+            </span>
+            {pendingCount > 0 && (
+              <span data-testid="nav-risk-pending-count" className="shrink-0 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-extrabold text-emerald-200 ring-1 ring-emerald-400/40">
+                {pendingCount} bekliyor
+              </span>
+            )}
           </button>
         </div>
       </main>

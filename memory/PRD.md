@@ -298,3 +298,10 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Frontend: pages/RiskRespond.jsx (/risk/respond/:token), components/RiskRespondItem.jsx (seçim + RISK-036 açıklama alanı).
 - Test: /root/dnatest/test_risk_respond_api.py 29/29 (yerel PostgREST + izole PG15), test_risk_links_api.py 32/32, DNA regresyon geçti; canlıda bilinmeyen kod 404 ve log maskeleme doğrulandı (yazma yok); Playwright sahte API ile form kuralları ve başarı/geçersiz ekranları doğrulandı.
 - Sıradaki: Aşama 3 onay bekleyenler listesi (olası tekrar işaretli), reddet/onayla (risk_link_approve), ardından QR gösterimi açılacak.
+
+## 2026-06 — Risk Haritası Öğrenci Formları Onayı (Aşama 3) + QR açıldı — UYGULANDI, Preview, onay bekleniyor
+- Kararlar: ayrı sayfa /school/risk-pending (Risk Haritası ana sayfasında 6. kart, "N bekliyor" rozeti); eşleştirme: adaylar gösterilir (numara + ad soyad), öğretmen seçer; QR ve kopyalanabilir bağlantı Sınıf Bağlantıları ekranında AÇILDI.
+- Backend: GET /api/school/risk-pending/count, GET /api/school/risk-pending?status=pending|approved|rejected (aktif yıl; dup_number/dup_name/number_in_pool işaretleri), GET /api/school/risk-pending/{id} (işaretli maddeler + notlar, adaylar: sınıf, aktiflik, bu yıl değerlendirme durumu; olası tekrar formları), POST .../{id}/approve {student_id|null} (risk_link_approve), POST .../{id}/reject {reason} (risk_link_reject). RK mesajları _RISK_LINK_ERRORS'a eklendi.
+- Log güvenliği: logging.getLogger("httpx") WARNING'e çekildi (Supabase istemcisi istek adreslerini — ad/numara/hash filtreleri — INFO olarak logluyordu).
+- Frontend: pages/SchoolRiskPending.jsx, components/RiskPendingList.jsx, RiskPendingDetail.jsx, RiskPendingDecision.jsx; RiskLinkShareCard.jsx artık QR + bağlantı + kopyala; SchoolHome.jsx 6. kart; App.js rota.
+- Test: test_risk_pending_api.py 29/29 (onaylanan form mevcut Sınıf Risk Haritası özetine +1 öğrenci/+1 tamamlanan/+2 işaret olarak yansıdı), respond 29/29, links 32/32, DNA regresyon geçti; canlıda yalnızca oturumsuz 401. Playwright sahte API ile liste/etiketler/aday kuralları/onay ve QR doğrulandı.

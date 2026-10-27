@@ -34,6 +34,7 @@ import SchoolDna from "./pages/SchoolDna";
 import SchoolDnaNew from "./pages/SchoolDnaNew";
 import SchoolDnaResponses from "./pages/SchoolDnaResponses";
 import SchoolRiskLinks from "./pages/SchoolRiskLinks";
+import SchoolRiskPending from "./pages/SchoolRiskPending";
 import RiskRespond from "./pages/RiskRespond";
 import RiskEntry from "./pages/RiskEntry";
 import ClassRiskMap from "./pages/ClassRiskMap";
@@ -132,6 +133,7 @@ export default function App() {
         <Route path="/school/risk-map" element={<ClassRiskMap />} />
         <Route path="/school/risk-map/school" element={<SchoolRiskMap />} />
         <Route path="/school/risk-links" element={<SchoolRiskLinks />} />
+        <Route path="/school/risk-pending" element={<SchoolRiskPending />} />
         <Route path="/school/statistics" element={<SchoolStatistics />} />
         <Route path="/school/riba" element={<SchoolRiba />} />
         <Route path="/school/riba/new" element={<SchoolRibaNew />} />

@@ -168,6 +168,8 @@ class _MaskDnaTokenFilter(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(_MaskDnaTokenFilter())
+# Supabase istemcisinin (httpx) istek adreslerini loglaması kapatılır: adreslerde ad/numara/hash bulunabilir.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 app = FastAPI(title="School Risk Maps API")
@@ -6352,6 +6354,16 @@ _RISK_LINK_ERRORS = {
     "risk_link_no_active_year": (409, "Aktif eğitim yılı belirlenemedi. Lütfen RAM ile iletişime geçin."),
     "risk_link_conflict": (409, "Bağlantı şu anda oluşturulamadı. Lütfen tekrar deneyiniz."),
     "risk_link_invalid_token_hash": (500, "Bağlantı oluşturulamadı. Lütfen tekrar deneyiniz."),
+    "risk_link_pending_not_found": (404, "Form bulunamadı."),
+    "risk_link_already_decided": (409, "Bu form daha önce karara bağlanmış."),
+    "risk_link_year_not_active": (409, "Formun eğitim yılı artık aktif değil."),
+    "risk_link_student_not_found": (404, "Seçilen öğrenci bulunamadı."),
+    "risk_link_student_number_exists": (409, "Bu okul numarası Öğrenci Havuzu'nda kayıtlı. Lütfen listeden ilgili öğrenciyi seçiniz."),
+    "risk_link_student_not_active": (409, "Seçilen öğrenci aktif değil (ayrılmış veya mezun)."),
+    "risk_link_class_mismatch": (409, "Öğrenci bu eğitim yılında başka bir sınıfa kayıtlı."),
+    "risk_link_assessment_exists": (409, "Öğrencinin bu yıl için risk değerlendirmesi zaten var; üzerine yazılmaz."),
+    "risk_link_concurrent_conflict": (409, "Aynı öğrenci için başka bir işlem yapıldı. Lütfen sayfayı yenileyiniz."),
+    "risk_link_reason_too_long": (422, "Gerekçe en fazla 300 karakter olabilir."),
 }
 
 
@@ -6566,6 +6578,162 @@ async def risk_public_submit(token: str, request: Request):
             raise HTTPException(status_code=mapped[0], detail=mapped[1])
         logger.error("risk_link_submit failed: code=%s", getattr(err, "code", None))
         raise HTTPException(status_code=500, detail="Formunuz gönderilemedi. Lütfen tekrar deneyiniz.")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Risk Haritası: onay bekleyen öğrenci formları (rehber öğretmen)
+# ---------------------------------------------------------------------------
+_RISK_PENDING_FIELDS = "id,school_class_id,first_name,last_name,student_number,status,submitted_at,decided_at,reject_reason,matched_student_id,created_student"
+
+
+def _risk_class_labels(client, school_id: str):
+    rows = client.table("school_classes").select("id,level,branch").eq("school_id", school_id).execute().data
+    return {r["id"]: f"{r['level']}/{r['branch']}" for r in rows}
+
+
+def _risk_dup_keys(rows):
+    num, name = {}, {}
+    for r in rows:
+        num[r["student_number"]] = num.get(r["student_number"], 0) + 1
+        k = (r["first_name"].casefold(), r["last_name"].casefold())
+        name[k] = name.get(k, 0) + 1
+    return num, name
+
+
+@api.get("/school/risk-pending/count")
+async def school_risk_pending_count(request: Request):
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    year = _risk_link_year(client)
+    rows = (
+        client.table("risk_link_pending_responses").select("id")
+        .eq("school_id", acc["school_id"]).eq("academic_year_id", year["id"]).eq("status", "pending").execute().data
+    )
+    return JSONResponse({"pending": len(rows)}, headers=_DNA_NO_STORE)
+
+
+@api.get("/school/risk-pending")
+async def school_risk_pending_list(request: Request, status: str = "pending"):
+    if status not in ("pending", "approved", "rejected"):
+        raise HTTPException(status_code=422, detail="Geçersiz durum filtresi.")
+    _uid, acc = _require_school_ready(request)
+    client = get_service_client()
+    school_id = acc["school_id"]
+    year = _risk_link_year(client)
+    all_rows = (
+        client.table("risk_link_pending_responses").select(_RISK_PENDING_FIELDS)
+        .eq("school_id", school_id).eq("academic_year_id", year["id"]).order("submitted_at", desc=True).execute().data
+    )
+    active = [r for r in all_rows if r["status"] != "rejected"]
+    num, name = _risk_dup_keys(active)
+    pool = set()
+    numbers = list({r["student_number"] for r in all_rows if r["status"] == status})
+    if numbers:
+        pool = {s["student_number"] for s in client.table("students").select("student_number")
+                .eq("school_id", school_id).in_("student_number", numbers).execute().data}
+    labels = _risk_class_labels(client, school_id)
+    out = []
+    for r in all_rows:
+        if r["status"] != status:
+            continue
+        counted = 1 if r["status"] != "rejected" else 0
+        out.append({
+            "id": r["id"], "first_name": r["first_name"], "last_name": r["last_name"],
+            "student_number": r["student_number"], "class_label": labels.get(r["school_class_id"], "—"),
+            "submitted_at": r["submitted_at"], "status": r["status"], "decided_at": r["decided_at"],
+            "dup_number": num.get(r["student_number"], 0) - counted > 0,
+            "dup_name": name.get((r["first_name"].casefold(), r["last_name"].casefold()), 0) - counted > 0,
+            "number_in_pool": r["student_number"] in pool,
+        })
+    return JSONResponse({"academic_year": year["name"], "items": out}, headers=_DNA_NO_STORE)
+
+
+def _risk_candidates(client, school_id: str, year_id: str, p: dict, labels: dict):
+    by_num = client.table("students").select("id,student_number,first_name,last_name,status") \
+        .eq("school_id", school_id).eq("student_number", p["student_number"]).execute().data
+    esc = lambda s: s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")  # noqa: E731
+    by_name = client.table("students").select("id,student_number,first_name,last_name,status") \
+        .eq("school_id", school_id).ilike("first_name", esc(p["first_name"])).ilike("last_name", esc(p["last_name"])) \
+        .limit(10).execute().data
+    cands = {s["id"]: {**s, "match": "number"} for s in by_num}
+    for s in by_name:
+        cands.setdefault(s["id"], {**s, "match": "name"})
+    ids = list(cands)
+    if ids:
+        enr = {e["student_id"]: e["school_class_id"] for e in client.table("student_class_enrollments")
+               .select("student_id,school_class_id").eq("academic_year_id", year_id).in_("student_id", ids).execute().data}
+        done = {a["student_id"] for a in client.table("student_risk_assessments").select("student_id")
+                .eq("academic_year_id", year_id).in_("student_id", ids).execute().data}
+        risky = {r["student_id"] for r in client.table("student_risks").select("student_id")
+                 .eq("academic_year_id", year_id).in_("student_id", ids).execute().data}
+        for sid, c in cands.items():
+            c["class_label"] = labels.get(enr.get(sid)) if enr.get(sid) else None
+            c["same_class"] = enr.get(sid) == p["school_class_id"]
+            c["has_assessment"] = sid in done or sid in risky
+    return sorted(cands.values(), key=lambda c: (c["match"] != "number", c["last_name"], c["first_name"]))
+
+
+@api.get("/school/risk-pending/{pending_id}")
+async def school_risk_pending_detail(pending_id: str, request: Request):
+    _uid, acc = _require_school_ready(request)
+    if not _DNA_UUID_RE.match(pending_id or ""):
+        raise HTTPException(status_code=404, detail="Form bulunamadı.")
+    client = get_service_client()
+    school_id = acc["school_id"]
+    rows = (
+        client.table("risk_link_pending_responses").select(_RISK_PENDING_FIELDS + ",academic_year_id")
+        .eq("id", pending_id).eq("school_id", school_id).limit(1).execute().data
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Form bulunamadı.")
+    p = rows[0]
+    labels = _risk_class_labels(client, school_id)
+    answers = client.table("risk_link_pending_answers").select("risk_category_id,note").eq("pending_response_id", pending_id).execute().data
+    cats = {c["id"]: c for c in client.table("risk_categories").select("id,sort_order,label").execute().data}
+    others = (
+        client.table("risk_link_pending_responses").select("id,first_name,last_name,student_number,status,submitted_at")
+        .eq("school_id", school_id).eq("academic_year_id", p["academic_year_id"]).neq("id", pending_id).execute().data
+    )
+    key = (p["first_name"].casefold(), p["last_name"].casefold())
+    dups = [o for o in others if o["student_number"] == p["student_number"] or (o["first_name"].casefold(), o["last_name"].casefold()) == key]
+    return JSONResponse({
+        "pending": {**{k: p[k] for k in _RISK_PENDING_FIELDS.split(",") if k != "school_class_id"},
+                    "class_label": labels.get(p["school_class_id"], "—")},
+        "answers": sorted([{"no": cats[a["risk_category_id"]]["sort_order"], "label": cats[a["risk_category_id"]]["label"], "note": a["note"]}
+                           for a in answers if a["risk_category_id"] in cats], key=lambda a: a["no"]),
+        "candidates": _risk_candidates(client, school_id, p["academic_year_id"], p, labels) if p["status"] == "pending" else [],
+        "duplicates": sorted(dups, key=lambda o: o["submitted_at"], reverse=True),
+    }, headers=_DNA_NO_STORE)
+
+
+@api.post("/school/risk-pending/{pending_id}/approve")
+async def school_risk_pending_approve(pending_id: str, request: Request):
+    _uid, acc = _require_school_ready(request)
+    if not _DNA_UUID_RE.match(pending_id or ""):
+        raise HTTPException(status_code=404, detail="Form bulunamadı.")
+    body = await request.json()
+    student_id = body.get("student_id") if isinstance(body, dict) else None
+    if student_id is not None and (not isinstance(student_id, str) or not _DNA_UUID_RE.match(student_id)):
+        raise HTTPException(status_code=404, detail="Seçilen öğrenci bulunamadı.")
+    res = _risk_link_rpc(get_service_client(), "risk_link_approve", {
+        "p_pending_id": pending_id, "p_school_id": acc["school_id"], "p_actor_account_id": acc["id"], "p_student_id": student_id,
+    })
+    return {"ok": True, "created_student": bool((res or {}).get("created_student"))}
+
+
+@api.post("/school/risk-pending/{pending_id}/reject")
+async def school_risk_pending_reject(pending_id: str, request: Request):
+    _uid, acc = _require_school_ready(request)
+    if not _DNA_UUID_RE.match(pending_id or ""):
+        raise HTTPException(status_code=404, detail="Form bulunamadı.")
+    body = await request.json()
+    reason = body.get("reason") if isinstance(body, dict) else None
+    if reason is not None and not isinstance(reason, str):
+        raise HTTPException(status_code=422, detail="Gerekçe okunamadı.")
+    _risk_link_rpc(get_service_client(), "risk_link_reject", {
+        "p_pending_id": pending_id, "p_school_id": acc["school_id"], "p_actor_account_id": acc["id"], "p_reason": reason,
+    })
     return {"ok": True}
 
 

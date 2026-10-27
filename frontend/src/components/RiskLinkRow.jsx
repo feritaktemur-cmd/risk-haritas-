@@ -55,7 +55,7 @@ export const RiskLinkRow = ({ cls, onCreate, onDeactivate }) => {
           )}
         </div>
       </div>
-      {active && <RiskLinkShareCard classLabel={label} />}
+      {active && <RiskLinkShareCard key={active.id} linkId={active.id} classLabel={label} />}
     </li>
   );
 };
