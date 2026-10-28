@@ -305,3 +305,6 @@ env değişkenleri doğru, /api prefix, portlar, CORS uygun.
 - Log güvenliği: logging.getLogger("httpx") WARNING'e çekildi (Supabase istemcisi istek adreslerini — ad/numara/hash filtreleri — INFO olarak logluyordu).
 - Frontend: pages/SchoolRiskPending.jsx, components/RiskPendingList.jsx, RiskPendingDetail.jsx, RiskPendingDecision.jsx; RiskLinkShareCard.jsx artık QR + bağlantı + kopyala; SchoolHome.jsx 6. kart; App.js rota.
 - Test: test_risk_pending_api.py 29/29 (onaylanan form mevcut Sınıf Risk Haritası özetine +1 öğrenci/+1 tamamlanan/+2 işaret olarak yansıdı), respond 29/29, links 32/32, DNA regresyon geçti; canlıda yalnızca oturumsuz 401. Playwright sahte API ile liste/etiketler/aday kuralları/onay ve QR doğrulandı.
+
+## 2026-06 — Risk Haritası ana ekranı kart düzenlemesi (UYGULANDI, Preview)
+- Yalnızca SchoolHome.jsx: sıra = Tekli Veri Girişi → Çoklu Veri Girişi (Link Üzerinden) → Öğrenci Formları Onayı → Sınıf Risk Haritası → Okul Risk Haritası → İstatistikler. Açıklama, ikon, yönlendirme ve "N bekliyor" sayacı korundu. Playwright ile sıra, başlıklar ve 6 yönlendirme doğrulandı.
